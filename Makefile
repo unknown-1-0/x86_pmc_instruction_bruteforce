@@ -1,6 +1,6 @@
 CC=clang
 TARGET_CFLAGS=-Wl,-entry:efi_main -Wl,-subsystem:efi_application -fuse-ld=lld-link -target x86_64-unknown-windows -nostdlib -ffreestanding -fshort-wchar -mno-red-zone
-CFLAGS=$(TARGET_CFLAGS) -Wall -Wextra -Wno-error=strict-prototypes -Wno-error=unused-function -pedantic -Werror -masm=intel -I/usr/include/efi -I./src -DSAVE_REGS_ON_EXCEPTION -O3 -g
+CFLAGS=$(TARGET_CFLAGS) -Wall -Wextra -Wno-error=strict-prototypes -Wno-error=unused-function -pedantic -Werror -masm=intel -I/usr/include/efi -I./src -DSAVE_REGS_ON_EXCEPTION -O3
 
 SRCS=src/main.c src/print.c src/load_segments.S src/exception_handlers.S src/handle_exception.c src/execute_instruction.c src/system_tables_setup.c
 
