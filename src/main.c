@@ -112,9 +112,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 
     printf(L"User code page @ 0x%x, remapping as user-accessible\r\n", user_code_page);
 
-    uint64_t old_cr0 = read_cr0();
-    write_cr0(old_cr0 & ~CR0_WP);
-
+    write_cr0(read_cr0() & ~CR0_WP);
 
     uint64_t* cur_page_table = (uint64_t*)(read_cr3() & ~0xfff);
     // Page level values:
@@ -242,15 +240,12 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
     }
 
     write_cr3(read_cr3());
-    write_cr0(old_cr0);
 
     setup_gdt();
     load_segments(0x8, 0x10, 0x28);
     setup_idt();
 
     wrmsr(MSR_IA32_EFER, rdmsr(MSR_IA32_EFER) | EFER_NXE);
-
-
     __asm__("ud2");
 
     halt();
