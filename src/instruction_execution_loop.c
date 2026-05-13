@@ -107,6 +107,7 @@ void execute_ud(void)
 
 bool measuring_ud_uops_issued = true;
 uint64_t ud_uops_issued_any = (uint64_t)-1;
+uint64_t last_uops_issued_any = (uint64_t)-1;
 void handle_exception(struct context* context)
 {
     __asm__("push 0\n"
@@ -157,26 +158,17 @@ void handle_exception(struct context* context)
         }
     }
 
-    /*for (size_t i = 0; i < cur_instruction_length; i++)
-    {
-        printf(L" %hx", instruction_bytes[i]);
-    }*/
-
-
-
-    /*printf(L"Exception %x\r\n", context->exception_number);
-    if (has_error_code)
-    {
-        printf(L"Error code: %x\r\n", context->error_code);
-    }
-
-    printf(L"CS:RIP = %x:%x RFLAGS=%x\r\n", frame->cs, frame->rip, frame->rflags);
-    printf(L"SS:RSP = %x:%x\r\n", frame->ss, frame->rsp);*/
-
-
     if (context->exception_number == EXCEPTION_INVALID_OPCODE)
     {
         uint64_t uops_issued_any = rdmsr(MSR_IA32_PMC0);
+
+        if (last_uops_issued_any != uops_issued_any)
+        {
+            last_uops_issued_any = uops_issued_any;
+            execute_current_instruction();
+        }
+
+        last_uops_issued_any = (uint64_t)-1;
 
         if (uops_issued_any != ud_uops_issued_any)
         {
@@ -214,9 +206,6 @@ void handle_exception(struct context* context)
 
 
     instruction_bytes[cur_byte_index]++;
-
-
-    //printf(L"UOPS_ISSUED.ANY=0x%x\r\n", rdmsr(MSR_IA32_PMC0));
 
     execute_current_instruction();
 }
