@@ -71,6 +71,7 @@ static inline void __attribute__((noreturn)) halt(void)
 void load_segments(uint16_t code_segment, uint16_t stack_segment, uint16_t task_segment);
 extern uint8_t* user_code_page;
 
+void execute_ud(void);
 #define KERNEL_STACK_PAGES 2
 
 #define PAGE_PRESENT (1ULL<<0)
@@ -246,8 +247,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
     setup_idt();
 
     wrmsr(MSR_IA32_EFER, rdmsr(MSR_IA32_EFER) | EFER_NXE);
-    __asm__("ud2");
 
-    halt();
+    execute_ud();
     __builtin_unreachable();
 }
