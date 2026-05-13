@@ -1,6 +1,8 @@
 #ifndef _MSR_H_
 #define _MSR_H_
 
+#include <stdint.h>
+
 static inline uint64_t __attribute__((always_inline)) rdmsr(uint32_t msr)
 {
     uint32_t low, high;
