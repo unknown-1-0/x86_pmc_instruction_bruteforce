@@ -62,6 +62,9 @@ void vsnprintf(CHAR16* out_buffer, size_t out_length, CHAR16* fmt, va_list varar
 
     size_t fmt_i = 0;
     size_t out_i = 0;
+
+    size_t digit_index = 7;
+
     while (out_i < out_length - 1)
     {
         switch (fmt[fmt_i])
@@ -70,7 +73,9 @@ void vsnprintf(CHAR16* out_buffer, size_t out_length, CHAR16* fmt, va_list varar
             out_buffer[out_i] = L'\0';
             return;
         case L'%':
+            digit_index = 7;
             fmt_i++;
+        recheck_fmt:
             switch (fmt[fmt_i])
             {
             case L'\0':
@@ -90,14 +95,41 @@ void vsnprintf(CHAR16* out_buffer, size_t out_length, CHAR16* fmt, va_list varar
                     }
                 }
                 break;
+            case L'l':
+            case L'L':
+                digit_index = 15;
+                fmt_i++;
+                goto recheck_fmt;
+            case L'h':
+            case L'H':
+                digit_index = 1;
+                fmt_i++;
+                goto recheck_fmt;
             case L'x':
             case L'X':
                 {
-                    uint64_t value = va_arg(varargs, uint64_t);
+                    uint64_t value = 0;
+
+                    switch (digit_index)
+                    {
+                    case 15:
+                        value = va_arg(varargs, uint64_t);
+                        break;
+                    case 7:
+                        value = va_arg(varargs, uint32_t);
+                        break;
+                    case 1:
+                        // uint8_t can be promoted to int, so uint8_t as a type here is UB
+                        value = va_arg(varargs, uint32_t);
+                        break;
+                    default:
+                        value = 0xbadf00d;
+                        break;
+                    }
                     
                     CHAR16* hex_chars = L"0123456789ABCDEF";
 
-                    size_t digit = 15;
+                    size_t digit = digit_index;
 
                     while (out_i < out_length - 1)
                     {
