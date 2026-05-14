@@ -147,7 +147,7 @@ void handle_exception(struct context* context)
                     printf(L" %hx", instruction_bytes[i]);
                 }
                 printf(L" - microcoded precondition failed (UOPS_ISSUED.ANY = 0x%lx)\r\n", uops_issued_any);
-                printf(L"0x%lx instructions were saved in total (not including this one)\r\n", instructions_saved);
+                printf(L"0x%lx instructions were saved in total (not including this one) (0x%lx bytes total)\r\n", instructions_saved, get_save_file_position());
                 print(L"Closing save file\r\n");
                 close_save_file();
                 print(L"Halting CPU\r\n");
@@ -157,7 +157,7 @@ void handle_exception(struct context* context)
 
             if (instructions_saved % 0x1000 == 0)
             {
-                printf(L"0x%lx instructions were saved, flushing\r\n", instructions_saved);
+                printf(L"0x%lx instructions were saved (0x%lx bytes), flushing\r\n", instructions_saved, get_save_file_position());
                 flush_save_file();
             }
         }
@@ -170,7 +170,7 @@ void handle_exception(struct context* context)
             instruction_bytes[cur_byte_index] = 0;
             if (cur_byte_index == 0)
             {
-                printf(L"Done, 0x%lx instructions saved, closing file\r\n", instructions_saved);
+                printf(L"Done, 0x%lx instructions saved (0x%lx bytes), closing file\r\n", instructions_saved, get_save_file_position());
                 close_save_file();
                 halt();
             }

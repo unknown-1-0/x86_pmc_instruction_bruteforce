@@ -132,6 +132,15 @@ EFI_STATUS flush_save_file(void)
     return output_file->Flush(output_file);
 }
 
+UINT64 get_save_file_position(void)
+{
+    UINT64 position = (UINT64)-1;
+
+    output_file->GetPosition(output_file, &position);
+
+    return position;
+}
+
 void close_save_file(void)
 {
     output_file->Close(output_file);
