@@ -53,7 +53,7 @@ EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
         return status;
     }
 
-    status = root_dir->Open(root_dir, &output_file, L"hidden_x86_instructions.bin",
+    status = root_dir->Open(root_dir, &output_file, L"interesting_x86_instructions.bin",
             EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
 
     root_dir->Close(root_dir);
