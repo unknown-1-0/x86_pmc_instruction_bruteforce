@@ -79,9 +79,6 @@ uint64_t last_uops_issued_any = (uint64_t)-1;
 size_t instructions_saved = 0;
 void handle_exception(struct context* context)
 {
-    __asm__("push 0\n"
-            "popfq\n":::"memory","flags");
-
     bool has_error_code = ((1ULL << context->exception_number) & EXCEPTIONS_WITH_ERROR_CODE_MASK) != 0;
     struct iretq_frame* frame = has_error_code ? &context->iretq_frame_with_error_code : &context->iretq_frame_no_error_code;
 

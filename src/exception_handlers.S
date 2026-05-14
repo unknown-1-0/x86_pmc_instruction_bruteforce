@@ -18,6 +18,8 @@ push rcx
 push rax
 #endif
 mov rcx, rsp
+push 0
+popfq
 jmp handle_exception
 
 .global handle_divide_error
