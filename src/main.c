@@ -55,6 +55,7 @@
 #define PERFEVTSEL_OS (1ULL<<17)
 #define PERFEVTSEL_USER (1ULL<<16)
 
+#define MSR_IA32_MCG_CTL 0x17b
 
 static inline void __attribute__((noreturn)) halt(void)
 {
@@ -86,6 +87,14 @@ EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 #define PAGE_NOEXECUTE (1ULL<<63)
 
 #define CR4_MCE (1ULL<<6)
+#define CPUID_01_EDX_MCE (1ULL<<7)
+#define CPUID_01_EDX_MCA (1ULL<<14)
+#define MSR_IA32_MCG_CAP 0x179
+#define MCG_CAP_REPORTING_BANKS_COUNT_MASK 0xfULL
+#define MCG_CAP_MCG_CTL_P (1ULL<<8)
+#define MSR_IA32_MC0_CTL 0x400
+#define MSR_IA32_MC0_STATUS 0x401
+
 #define CR4_OSFXSR (1ULL<<9)
 #define CR4_OSXMMEXCPT (1ULL<<10)
 #define CR4_OSXSAVE (1ULL<<18)
@@ -116,7 +125,34 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 
     SystemTable->BootServices->SetMem(user_code_page, 0x1000, 0);
 
-    write_cr4(read_cr4() | CR4_OSXSAVE | CR4_OSXMMEXCPT | CR4_OSFXSR | CR4_MCE);
+    uint64_t cr4 = read_cr4() | CR4_OSXSAVE | CR4_OSXMMEXCPT | CR4_OSFXSR;
+
+    {
+        uint32_t edx = 0;
+        __asm__("cpuid":"=d"(edx):"a"(1):"rbx","rcx");
+        if (edx & CPUID_01_EDX_MCE)
+        {
+            cr4 |= CR4_MCE;
+
+            if (edx & CPUID_01_EDX_MCA)
+            {
+                uint64_t mcg_cap = rdmsr(MSR_IA32_MCG_CAP);
+                if (mcg_cap & MCG_CAP_MCG_CTL_P)
+                {
+                    wrmsr(MSR_IA32_MCG_CTL, ~0ULL);
+                }
+
+                // We do not support very old CPUs that alias MC0_CTL to EBL_CR_POWERON MSR
+                for (unsigned int i = 0; i < (mcg_cap & MCG_CAP_REPORTING_BANKS_COUNT_MASK); i++)
+                {
+                    wrmsr(MSR_IA32_MC0_CTL + i * 4, ~0ULL);
+                    wrmsr(MSR_IA32_MC0_STATUS + i * 4, 0);
+                }
+            }
+        }
+    }
+
+    write_cr4(cr4);
 
     uint32_t xcr0_lower = 0xd, xcr0_upper = 0;
     uint32_t supported_features_size = 0;
@@ -273,7 +309,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
             cur_new_page_table = (uint64_t*)((size_t)cur_new_page_table + 0x1000);
         }
 
-        cur_page_table[page_table_index] = (size_t)new_page_tables | PAGE_USER | PAGE_WRITABLE | PAGE_PRESENT;        
+        cur_page_table[page_table_index] = (size_t)new_page_tables | PAGE_USER | PAGE_WRITABLE | PAGE_PRESENT;
     }
 
     write_cr3(read_cr3());

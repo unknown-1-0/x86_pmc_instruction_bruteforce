@@ -1,3 +1,4 @@
+#include "control_registers.h"
 #include "exception_context.h"
 #include "msr.h"
 #include "print.h"
@@ -51,7 +52,15 @@ void execute_current_instruction(void)
 
 #define EXCEPTION_INVALID_OPCODE 6
 #define EXCEPTION_PAGE_FAULT 14
+#define PF_USER (1ULL<<2)
 #define PF_INSTRUCTION_FETCH (1ULL<<4)
+
+#define EXCEPTION_MACHINE_CHECK 18
+#define MSR_IA32_MCG_STATUS 0x17a
+#define MCG_STATUS_MCIP (1ULL<<2)
+
+#define MSR_IA32_MC0_STATUS 0x401
+#define MC_STATUS_VALID (1ULL<<63)
 
 size_t last_instruction_length = 0;
 void increment_instruction_length_and_retry_exec(void)
@@ -77,6 +86,22 @@ uint64_t ud_uops_issued_any = (uint64_t)-1;
 uint64_t last_uops_issued_any = (uint64_t)-1;
 
 size_t instructions_saved = 0;
+size_t kernel_exceptions = 0;
+size_t kernel_page_faults = 0;
+size_t hidden_instructions = 0;
+size_t machine_checks = 0;
+
+static CHAR16* exception_names[] = {
+    L"#DE", L"#DB", L"NMI", L"#BP",
+    L"#OF", L"#BR", L"#UD", L"#NM",
+    L"#DF", NULL,   L"#TS", L"#NP",
+    L"#SS", L"#GP", L"#PF", NULL,
+    L"#MF", L"#AC", L"#MC", L"#XM",
+    L"#VE", L"#CP"
+};
+
+#define MSR_IA32_MCG_CAP 0x179
+#define MCG_CAP_REPORTING_BANKS_COUNT_MASK 0xfULL
 void handle_exception(struct context* context)
 {
     bool has_error_code = ((1ULL << context->exception_number) & EXCEPTIONS_WITH_ERROR_CODE_MASK) != 0;
@@ -111,7 +136,8 @@ void handle_exception(struct context* context)
         printf(L"UD issued micro-ops count: 0x%lx\r\n", ud_uops_issued_any);
         execute_current_instruction();
     }
-    
+
+    bool is_interesting_instruction = false;
 
     if (context->exception_number == EXCEPTION_PAGE_FAULT && (context->error_code & PF_INSTRUCTION_FETCH) && (frame->cs & 3) == 3)
     {
@@ -124,43 +150,63 @@ void handle_exception(struct context* context)
         }
     }
 
-    if (context->exception_number == EXCEPTION_INVALID_OPCODE)
+    uint64_t uops_issued_any = rdmsr(MSR_IA32_PMC0);
+    uint64_t extra_info = 0;
+
+    switch (context->exception_number)
     {
-        uint64_t uops_issued_any = rdmsr(MSR_IA32_PMC0);
-
-        if (last_uops_issued_any != uops_issued_any)
+    case EXCEPTION_PAGE_FAULT:
+        if (!(context->error_code & PF_USER))
         {
-            last_uops_issued_any = uops_issued_any;
-            execute_current_instruction();
+            is_interesting_instruction = true;
+            extra_info = read_cr2();
+            kernel_page_faults++;
         }
-
-        last_uops_issued_any = (uint64_t)-1;
-
-        if (uops_issued_any != ud_uops_issued_any)
+        __attribute__((fallthrough));
+    default:
+        if ((frame->cs & 3) != 3)
         {
-            if (save_instruction_data(context, instruction_bytes, cur_instruction_length, uops_issued_any) != EFI_SUCCESS)
+            is_interesting_instruction = true;
+            kernel_exceptions++;
+        }
+        break;
+    case EXCEPTION_INVALID_OPCODE:
+        {
+            if (last_uops_issued_any != uops_issued_any)
             {
-                print(L"Saving instruction info failed, last info:\r\n");
-                print(L"#UD -");
-                for (size_t i = 0; i < cur_instruction_length; i++)
-                {
-                    printf(L" %hx", instruction_bytes[i]);
-                }
-                printf(L" - microcoded precondition failed (UOPS_ISSUED.ANY = 0x%lx)\r\n", uops_issued_any);
-                printf(L"0x%lx instructions were saved in total (not including this one) (0x%lx bytes total)\r\n", instructions_saved, get_save_file_position());
-                print(L"Closing save file\r\n");
-                close_save_file();
-                print(L"Halting CPU\r\n");
-                halt();
+                last_uops_issued_any = uops_issued_any;
+                execute_current_instruction();
             }
-            instructions_saved++;
 
-            if (instructions_saved % 0x1000 == 0)
+            last_uops_issued_any = (uint64_t)-1;
+
+            if (uops_issued_any != ud_uops_issued_any)
             {
-                printf(L"0x%lx instructions were saved (0x%lx bytes), flushing\r\n", instructions_saved, get_save_file_position());
-                flush_save_file();
+                is_interesting_instruction = true;
+                extra_info = uops_issued_any;
+                hidden_instructions++;
             }
         }
+        break;
+    case EXCEPTION_MACHINE_CHECK:
+        is_interesting_instruction = true;
+        machine_checks++;
+        print(L"!!! MACHINE CHECK !!!\r\n");
+        uint64_t mcg_status = rdmsr(MSR_IA32_MCG_STATUS);
+        printf(L"IA32_MCG_STATUS=%lx\r\n", mcg_status);
+        uint64_t mc_banks = rdmsr(MSR_IA32_MCG_CAP) & MCG_CAP_REPORTING_BANKS_COUNT_MASK;
+        for (uint64_t i = 0; i < mc_banks; i++)
+        {
+            uint64_t mc_status = rdmsr(MSR_IA32_MC0_STATUS + i * 4);
+            printf(L"MC Status bank %lx contents: %lx\r\n", i, mc_status);
+            wrmsr(MSR_IA32_MC0_STATUS + i * 4, 0);
+            if (mc_status & MC_STATUS_VALID)
+            {
+                extra_info = mc_status;
+            }
+        }
+        wrmsr(MSR_IA32_MCG_STATUS, mcg_status & ~MCG_STATUS_MCIP);
+        break;
     }
 
     if (cur_instruction_length == last_instruction_length)
@@ -184,6 +230,55 @@ void handle_exception(struct context* context)
     {
         cur_byte_index = cur_instruction_length - 1;
         last_instruction_length = cur_instruction_length;
+    }
+
+    if (is_interesting_instruction)
+    {
+        if (save_instruction_data(context, instruction_bytes, cur_instruction_length, extra_info) != EFI_SUCCESS)
+        {
+            print(L"Saving instruction info failed, last info:\r\n");
+            uint64_t exception_number = context->exception_number;
+
+            CHAR16* exception_name = exception_number >= sizeof(exception_names)/sizeof(exception_names[0]) ? NULL : exception_names[exception_number];
+
+            if (exception_name == NULL)
+            {
+                printf(L"#%lx", exception_number);
+            }
+            else
+            {
+                print(exception_name);
+            }
+
+            if (has_error_code)
+            {
+                printf(L"(0x%lx)", context->error_code);
+            }
+
+            print(L" -");
+
+            for (size_t i = 0; i < cur_instruction_length; i++)
+            {
+                printf(L" %hx", instruction_bytes[i]);
+            }
+            printf(L" - UOPS_ISSUED.ANY = 0x%lx\r\n", uops_issued_any);
+            printf(L"0x%lx instructions were saved in total (not including this one) (0x%lx bytes total)\r\n", instructions_saved, get_save_file_position());
+            printf(L"Kernel: page faults: 0x%lx, exceptions: 0x%lx\r\n", kernel_page_faults, kernel_exceptions);
+            printf(L"Hidden instructions: 0x%lx, machine checks: 0x%lx\r\n", hidden_instructions, machine_checks);
+            print(L"Closing save file\r\n");
+            close_save_file();
+            print(L"Halting CPU\r\n");
+            halt();
+        }
+        instructions_saved++;
+
+        if (instructions_saved % 0x1000 == 0)
+        {
+            printf(L"0x%lx instructions were saved (0x%lx bytes), flushing\r\n", instructions_saved, get_save_file_position());
+            printf(L"Kernel: page faults: 0x%lx, exceptions: 0x%lx\r\n", kernel_page_faults, kernel_exceptions);
+            printf(L"Hidden instructions: 0x%lx, machine checks: 0x%lx\r\n", hidden_instructions, machine_checks);
+            flush_save_file();
+        }
     }
 
 
