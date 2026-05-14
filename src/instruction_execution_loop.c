@@ -209,29 +209,6 @@ void handle_exception(struct context* context)
         break;
     }
 
-    if (cur_instruction_length == last_instruction_length)
-    {
-        while (instruction_bytes[cur_byte_index] == 0xff)
-        {
-            instruction_bytes[cur_byte_index] = 0;
-            if (cur_byte_index == 0)
-            {
-                printf(L"Done, 0x%lx instructions saved (0x%lx bytes), closing file\r\n", instructions_saved, get_save_file_position());
-                close_save_file();
-                halt();
-            }
-
-            cur_byte_index--;
-        }
-        // will be incremented during page fault handling if needed
-        cur_instruction_length = cur_byte_index + 1;
-    }
-    else
-    {
-        cur_byte_index = cur_instruction_length - 1;
-        last_instruction_length = cur_instruction_length;
-    }
-
     if (is_interesting_instruction)
     {
         if (save_instruction_data(context, instruction_bytes, cur_instruction_length, extra_info) != EFI_SUCCESS)
@@ -281,6 +258,28 @@ void handle_exception(struct context* context)
         }
     }
 
+    if (cur_instruction_length == last_instruction_length)
+    {
+        while (instruction_bytes[cur_byte_index] == 0xff)
+        {
+            instruction_bytes[cur_byte_index] = 0;
+            if (cur_byte_index == 0)
+            {
+                printf(L"Done, 0x%lx instructions saved (0x%lx bytes), closing file\r\n", instructions_saved, get_save_file_position());
+                close_save_file();
+                halt();
+            }
+
+            cur_byte_index--;
+        }
+        // will be incremented during page fault handling if needed
+        cur_instruction_length = cur_byte_index + 1;
+    }
+    else
+    {
+        cur_byte_index = cur_instruction_length - 1;
+        last_instruction_length = cur_instruction_length;
+    }
 
     instruction_bytes[cur_byte_index]++;
 
