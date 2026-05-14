@@ -98,7 +98,7 @@ void handle_exception(struct context* context)
 
             printf(L"CS:RIP = %lx:%lx RFLAGS=%lx\r\n", frame->cs, frame->rip, frame->rflags);
             printf(L"SS:RSP = %lx:%lx\r\n", frame->ss, frame->rsp);
-            while(1);
+            halt();
         }
 
         uint64_t current_ud_uops_issued_any = rdmsr(MSR_IA32_PMC0);

@@ -70,6 +70,8 @@ static inline void __attribute__((noreturn)) halt(void)
 #define EFER_NXE (1ULL<<11)
 void load_segments(uint16_t code_segment, uint16_t stack_segment, uint16_t task_segment);
 extern uint8_t* user_code_page;
+uint8_t* xsave_state_area_allocated_ptr = NULL;
+uint8_t* xsave_state_area_ptr = NULL;
 
 void execute_ud(void);
 EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable);
@@ -82,6 +84,11 @@ EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 #define PAGE_DIRTY (1ULL<<6)
 #define PAGE_SIZE (1ULL<<7)
 #define PAGE_NOEXECUTE (1ULL<<63)
+
+#define CR4_MCE (1ULL<<6)
+#define CR4_OSFXSR (1ULL<<9)
+#define CR4_OSXMMEXCPT (1ULL<<10)
+#define CR4_OSXSAVE (1ULL<<18)
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 {
     (void)ImageHandle;
@@ -109,13 +116,33 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 
     SystemTable->BootServices->SetMem(user_code_page, 0x1000, 0);
 
+    write_cr4(read_cr4() | CR4_OSXSAVE | CR4_OSXMMEXCPT | CR4_OSFXSR | CR4_MCE);
+
+    uint32_t xcr0_lower = 0xd, xcr0_upper = 0;
+    uint32_t supported_features_size = 0;
+    __asm__("cpuid":"+a"(xcr0_lower),"=d"(xcr0_upper),"+c"(supported_features_size)::"rbx");
+    __asm__("xsetbv"::"a"(xcr0_lower),"d"(xcr0_upper),"c"(0));
+    status = SystemTable->BootServices->AllocatePool(EfiLoaderData, supported_features_size+0x40, (VOID**)&xsave_state_area_allocated_ptr);
+
+    if (status != EFI_SUCCESS)
+    {
+        printf(L"Could not allocate memory for XSAVE state area, status = 0x%lx\r\n", (uint64_t)status);
+        return status;
+    }
+
+    // Resets XSTATE_BV field by the way
+    SystemTable->BootServices->SetMem(xsave_state_area_allocated_ptr, supported_features_size+0x40, 0);
+
+    xsave_state_area_ptr = (uint8_t*)(((size_t)xsave_state_area_allocated_ptr + 0x40 - 1) & ~0x3fULL);
+
+    __asm__("xrstor [%0]"::"r"(xsave_state_area_ptr):"memory");
+
     status = open_save_file(ImageHandle, SystemTable);
     if (status != EFI_SUCCESS)
     {
         printf(L"Could not open an output file, status = 0x%lx\r\n", (uint64_t)status);
         return status;
     }
-
 
     __asm__("cli");
     write_cr8(0xf);

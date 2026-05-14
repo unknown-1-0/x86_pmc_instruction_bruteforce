@@ -8,6 +8,9 @@ push (1<<8) | 2 // rflags.tf = 1
 push 0x1b // cs
 push rcx // rip
 
+mov rax, [rip+xsave_state_area_ptr]
+xrstor [rax]
+
 xor eax, eax
 xor ecx, ecx
 xor edx, edx
