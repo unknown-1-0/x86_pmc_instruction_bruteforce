@@ -1,7 +1,18 @@
+#include "exception_context.h"
 #include "msr.h"
 #include "print.h"
+#include "save_file.h"
 #include <stdbool.h>
 #include <stdint.h>
+
+static inline void __attribute__((noreturn)) halt(void)
+{
+    while(1)
+    {
+        __asm__("cli");
+        __asm__("hlt");
+    }
+}
 
 #define MSR_IA32_PMC0 0xc1
 
@@ -38,53 +49,9 @@ void execute_current_instruction(void)
     execute_instruction(instruction_bytes, cur_instruction_length);
 }
 
-// Exception handling
-
-struct iretq_frame
-{
-    uint64_t rip;
-    uint64_t cs;
-    uint64_t rflags;
-    uint64_t rsp;
-    uint64_t ss;
-};
-
-struct context
-{
-#ifdef SAVE_REGS_ON_EXCEPTION
-    uint64_t rax;
-    uint64_t rcx;
-    uint64_t rdx;
-    uint64_t rbx;
-    uint64_t rbp;
-    uint64_t rsi;
-    uint64_t rdi;
-    uint64_t r8;
-    uint64_t r9;
-    uint64_t r10;
-    uint64_t r11;
-    uint64_t r12;
-    uint64_t r13;
-    uint64_t r14;
-    uint64_t r15;
-#endif
-    uint64_t exception_number;
-    union
-    {
-        struct iretq_frame iretq_frame_no_error_code;
-        struct
-        {
-            uint64_t error_code;
-            struct iretq_frame iretq_frame_with_error_code;
-        };
-    };
-};
-
 #define EXCEPTION_INVALID_OPCODE 6
 #define EXCEPTION_PAGE_FAULT 14
 #define PF_INSTRUCTION_FETCH (1ULL<<4)
-static const uint32_t exceptions_with_error_code_mask = 
-    (1ULL<<8) | (1ULL<<10) | (1ULL<<11) | (1ULL<<12) | (1ULL<<13) | (1ULL<<14) | (1ULL<<17) | (1ULL<<21);
 
 size_t last_instruction_length = 0;
 void increment_instruction_length_and_retry_exec(void)
@@ -108,12 +75,14 @@ void execute_ud(void)
 bool measuring_ud_uops_issued = true;
 uint64_t ud_uops_issued_any = (uint64_t)-1;
 uint64_t last_uops_issued_any = (uint64_t)-1;
+
+size_t instructions_saved = 0;
 void handle_exception(struct context* context)
 {
     __asm__("push 0\n"
             "popfq\n":::"memory","flags");
 
-    bool has_error_code = ((1ULL << context->exception_number) & exceptions_with_error_code_mask) != 0;
+    bool has_error_code = ((1ULL << context->exception_number) & EXCEPTIONS_WITH_ERROR_CODE_MASK) != 0;
     struct iretq_frame* frame = has_error_code ? &context->iretq_frame_with_error_code : &context->iretq_frame_no_error_code;
 
     wrmsr(MSR_IA32_PERFEVTSEL0, 0);
@@ -172,13 +141,28 @@ void handle_exception(struct context* context)
 
         if (uops_issued_any != ud_uops_issued_any)
         {
-            print(L"#UD -");
-            for (size_t i = 0; i < cur_instruction_length; i++)
+            if (save_instruction_data(context, instruction_bytes, cur_instruction_length, uops_issued_any) != EFI_SUCCESS)
             {
-                printf(L" %hx", instruction_bytes[i]);
+                print(L"Saving instruction info failed, last info:\r\n");
+                print(L"#UD -");
+                for (size_t i = 0; i < cur_instruction_length; i++)
+                {
+                    printf(L" %hx", instruction_bytes[i]);
+                }
+                printf(L" - microcoded precondition failed (UOPS_ISSUED.ANY = 0x%lx)\r\n", uops_issued_any);
+                printf(L"0x%lx instructions were saved in total (not including this one)\r\n", instructions_saved);
+                print(L"Closing save file\r\n");
+                close_save_file();
+                print(L"Halting CPU\r\n");
+                halt();
             }
+            instructions_saved++;
 
-            printf(L" - microcoded precondition failed (UOPS_ISSUED.ANY = 0x%lx)\r\n", uops_issued_any);
+            if (instructions_saved % 0x1000 == 0)
+            {
+                printf(L"0x%lx instructions were saved, flushing\r\n", instructions_saved);
+                flush_save_file();
+            }
         }
     }
 
@@ -189,8 +173,9 @@ void handle_exception(struct context* context)
             instruction_bytes[cur_byte_index] = 0;
             if (cur_byte_index == 0)
             {
-                print(L"Done\r\n");
-                while(1);
+                printf(L"Done, 0x%lx instructions saved, closing file\r\n", instructions_saved);
+                close_save_file();
+                halt();
             }
 
             cur_byte_index--;
