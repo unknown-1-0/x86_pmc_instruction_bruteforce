@@ -100,6 +100,40 @@ static CHAR16* exception_names[] = {
     L"#VE", L"#CP"
 };
 
+void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t instruction_length, uint64_t extra_info, uint64_t uops_issued_any)
+{
+    printf(L"Kernel: page faults: 0x%lx, exceptions: 0x%lx\r\n", kernel_page_faults, kernel_exceptions);
+    printf(L"Hidden instructions: 0x%lx, machine checks: 0x%lx\r\n", hidden_instructions, machine_checks);
+    print(L"Current instruction info:\r\n");
+    uint64_t exception_number = context->exception_number;
+    bool has_error_code = ((1ULL << exception_number) & EXCEPTIONS_WITH_ERROR_CODE_MASK) != 0;
+
+    CHAR16* exception_name = exception_number >= sizeof(exception_names)/sizeof(exception_names[0]) ? NULL : exception_names[exception_number];
+
+    if (exception_name == NULL)
+    {
+        printf(L"#%lx", exception_number);
+    }
+    else
+    {
+        print(exception_name);
+    }
+
+    if (has_error_code)
+    {
+        printf(L"(0x%lx)", context->error_code);
+    }
+
+    print(L" -");
+
+    for (size_t i = 0; i < instruction_length; i++)
+    {
+        printf(L" %hx", instruction_bytes[i]);
+    }
+
+    printf(L" (extra info: 0x%lx, UOPS_ISSUED.ANY = 0x%lx)\r\n\r\n", extra_info, uops_issued_any);
+}
+
 #define MSR_IA32_MCG_CAP 0x179
 #define MCG_CAP_REPORTING_BANKS_COUNT_MASK 0xfULL
 void handle_exception(struct context* context)
@@ -213,35 +247,11 @@ void handle_exception(struct context* context)
     {
         if (save_instruction_data(context, instruction_bytes, cur_instruction_length, extra_info) != EFI_SUCCESS)
         {
-            print(L"Saving instruction info failed, last info:\r\n");
-            uint64_t exception_number = context->exception_number;
-
-            CHAR16* exception_name = exception_number >= sizeof(exception_names)/sizeof(exception_names[0]) ? NULL : exception_names[exception_number];
-
-            if (exception_name == NULL)
-            {
-                printf(L"#%lx", exception_number);
-            }
-            else
-            {
-                print(exception_name);
-            }
-
-            if (has_error_code)
-            {
-                printf(L"(0x%lx)", context->error_code);
-            }
-
-            print(L" -");
-
-            for (size_t i = 0; i < cur_instruction_length; i++)
-            {
-                printf(L" %hx", instruction_bytes[i]);
-            }
-            printf(L" - UOPS_ISSUED.ANY = 0x%lx\r\n", uops_issued_any);
+            print(L"Saving instruction info failed.\r\n");
             printf(L"0x%lx instructions were saved in total (not including this one) (0x%lx bytes total)\r\n", instructions_saved, get_save_file_position());
-            printf(L"Kernel: page faults: 0x%lx, exceptions: 0x%lx\r\n", kernel_page_faults, kernel_exceptions);
-            printf(L"Hidden instructions: 0x%lx, machine checks: 0x%lx\r\n", hidden_instructions, machine_checks);
+
+            dump_stats(context, instruction_bytes, cur_instruction_length, extra_info, uops_issued_any);
+
             print(L"Closing save file\r\n");
             close_save_file();
             print(L"Halting CPU\r\n");
@@ -249,11 +259,13 @@ void handle_exception(struct context* context)
         }
         instructions_saved++;
 
-        if (instructions_saved % 0x1000 == 0)
+        if (instructions_saved % 0x10000 == 0)
         {
             printf(L"0x%lx instructions were saved (0x%lx bytes), flushing\r\n", instructions_saved, get_save_file_position());
-            printf(L"Kernel: page faults: 0x%lx, exceptions: 0x%lx\r\n", kernel_page_faults, kernel_exceptions);
-            printf(L"Hidden instructions: 0x%lx, machine checks: 0x%lx\r\n", hidden_instructions, machine_checks);
+
+            dump_stats(context, instruction_bytes, cur_instruction_length, extra_info, uops_issued_any);
+
+
             flush_save_file();
         }
     }
