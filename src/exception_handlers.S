@@ -20,6 +20,9 @@ push rax
 mov rcx, rsp
 push 0
 popfq
+
+and rsp, ~0xf
+push 0
 jmp handle_exception
 
 .global handle_divide_error
