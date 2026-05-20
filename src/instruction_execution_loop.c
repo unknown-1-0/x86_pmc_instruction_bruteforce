@@ -51,7 +51,7 @@ void execute_instruction(const uint8_t* instruction, size_t size)
     enter_user(user_code_page + 0x1000 - size, NULL);
 }
 
-uint8_t instruction_bytes[18] = {0x20};
+uint8_t instruction_bytes[18] = {0x00};
 size_t cur_instruction_length = 1;
 size_t cur_byte_index = 0;
 
