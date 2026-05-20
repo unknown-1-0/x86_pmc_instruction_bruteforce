@@ -134,6 +134,47 @@ void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t inst
     printf(L" (extra info: 0x%lx, UOPS_ISSUED.ANY = 0x%lx)\r\n\r\n", extra_info, uops_issued_any);
 }
 
+unsigned int count_prefixes(uint8_t* bytes, size_t length)
+{
+    unsigned int prefixes = 0;
+
+    for  (size_t i = 0; i < length; i++)
+    {
+        switch (bytes[i])
+        {
+        case 0x26: // ES
+        case 0x2e: // CS
+        case 0x36: // SS
+        case 0x3e: // DS
+        case 0x64: // FS
+        case 0x65: // GS
+        case 0x66: // Operand-size override
+        case 0x67: // Address-size override
+        case 0xf0: // LOCK
+        case 0xf2: // REPNE
+        case 0xf3: // REP/REPE
+        case 0xc4: // VEX 3-byte form
+        case 0xc5: // VEX 2-byte form
+            prefixes++;
+            continue;
+        default:
+            break;
+        }
+
+        // REX prefix
+        if ((bytes[i] & ~0xf) == 0x40)
+        {
+            prefixes++;
+            continue;
+        }
+
+        break;
+    }
+
+
+    return prefixes;
+}
+
 #define MSR_IA32_MCG_CAP 0x179
 #define MCG_CAP_REPORTING_BANKS_COUNT_MASK 0xfULL
 void handle_exception(struct context* context)
@@ -293,7 +334,12 @@ void handle_exception(struct context* context)
         last_instruction_length = cur_instruction_length;
     }
 
-    instruction_bytes[cur_byte_index]++;
+    do
+    {
+        instruction_bytes[cur_byte_index]++;
+        // REX + Segment override + Operand-size override + Address-size override +
+        // REP/REPE + REPNE + VEX = 7 prefixes
+    } while(count_prefixes(instruction_bytes, cur_instruction_length) > 7);
 
     execute_current_instruction();
 }
