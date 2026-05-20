@@ -148,7 +148,6 @@ static bool contains_repeating_prefixes(const uint8_t* bytes, size_t length)
     bool lock_seen = false;
     bool repne_seen = false;
     bool rep_seen = false;
-    bool vex_seen = false;
     bool rex_seen = false;
 
     for (size_t i = 0; i < length; i++)
@@ -205,12 +204,9 @@ static bool contains_repeating_prefixes(const uint8_t* bytes, size_t length)
             break;
         case 0xc4:
         case 0xc5:
-            if (vex_seen)
-            {
-                return true;
-            }
-            vex_seen = true;
-            break;
+            // VEX prefix contains various fields in the next 1-2 bytes,
+            // and, if it's present, the opcode bytes are located immediately after it
+            return false;
         case 0x40:
         case 0x41:
         case 0x42:
