@@ -45,7 +45,7 @@ void execute_instruction(const uint8_t* instruction, size_t size)
     enter_user(user_code_page + 0x1000 - size, NULL);
 }
 
-uint8_t instruction_bytes[18] = {0};
+uint8_t instruction_bytes[18] = {0x20};
 size_t cur_instruction_length = 1;
 size_t cur_byte_index = 0;
 
@@ -138,45 +138,105 @@ void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t inst
     printf(L" (extra info: 0x%lx, UOPS_ISSUED.ANY = 0x%lx)\r\n\r\n", extra_info, uops_issued_any);
 }
 
-unsigned int count_prefixes(uint8_t* bytes, size_t length)
+static bool contains_repeating_prefixes(const uint8_t* bytes, size_t length)
 {
-    unsigned int prefixes = 0;
+    bool segment_override_seen = false;
+    bool operand_size_override_seen = false;
+    bool address_size_override_seen = false;
+    bool lock_seen = false;
+    bool repne_seen = false;
+    bool rep_seen = false;
+    bool vex_seen = false;
+    bool rex_seen = false;
 
-    for  (size_t i = 0; i < length; i++)
+    for (size_t i = 0; i < length; i++)
     {
-        switch (bytes[i])
+        uint8_t byte = bytes[i];
+        switch(byte)
         {
-        case 0x26: // ES
-        case 0x2e: // CS
-        case 0x36: // SS
-        case 0x3e: // DS
-        case 0x64: // FS
-        case 0x65: // GS
-        case 0x66: // Operand-size override
-        case 0x67: // Address-size override
-        case 0xf0: // LOCK
-        case 0xf2: // REPNE
-        case 0xf3: // REP/REPE
-        case 0xc4: // VEX 3-byte form
-        case 0xc5: // VEX 2-byte form
-            prefixes++;
-            continue;
-        default:
+        case 0x26:
+        case 0x2e:
+        case 0x36:
+        case 0x3e:
+        case 0x64:
+        case 0x65:
+            if (segment_override_seen)
+            {
+                return true;
+            }
+            segment_override_seen = true;
             break;
+        case 0x66:
+            if (operand_size_override_seen)
+            {
+                return true;
+            }
+            operand_size_override_seen = true;
+            break;
+        case 0x67:
+            if (address_size_override_seen)
+            {
+                return true;
+            }
+            address_size_override_seen = true;
+            break;
+        case 0xf0:
+            if (lock_seen)
+            {
+                return true;
+            }
+            lock_seen = true;
+            break;
+        case 0xf2:
+            if (repne_seen)
+            {
+                return true;
+            }
+            repne_seen = true;
+            break;
+        case 0xf3:
+            if (rep_seen)
+            {
+                return true;
+            }
+            rep_seen = true;
+            break;
+        case 0xc4:
+        case 0xc5:
+            if (vex_seen)
+            {
+                return true;
+            }
+            vex_seen = true;
+            break;
+        case 0x40:
+        case 0x41:
+        case 0x42:
+        case 0x43:
+        case 0x44:
+        case 0x45:
+        case 0x46:
+        case 0x47:
+        case 0x48:
+        case 0x49:
+        case 0x4a:
+        case 0x4b:
+        case 0x4c:
+        case 0x4d:
+        case 0x4e:
+        case 0x4f:
+            if (rex_seen)
+            {
+                return true;
+            }
+            rex_seen = true;
+            break;
+        default:
+            return false;
         }
-
-        // REX prefix
-        if ((bytes[i] & ~0xf) == 0x40)
-        {
-            prefixes++;
-            continue;
-        }
-
-        break;
     }
 
-
-    return prefixes;
+    return false;
 }
 
 #define MSR_IA32_MCG_CAP 0x179
@@ -341,9 +401,7 @@ void handle_exception(struct context* context)
     do
     {
         instruction_bytes[cur_byte_index]++;
-        // REX + Segment override + Operand-size override + Address-size override +
-        // REP/REPE + REPNE + VEX = 7 prefixes
-    } while(count_prefixes(instruction_bytes, cur_instruction_length) > 7);
+    } while(contains_repeating_prefixes(instruction_bytes, cur_instruction_length));
 
     execute_current_instruction();
 }
