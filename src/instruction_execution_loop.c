@@ -16,13 +16,16 @@ static inline void __attribute__((noreturn)) halt(void)
 }
 
 #define MSR_IA32_PMC0 0xc1
+#define MSR_IA32_PMC1 0xc2
 
 #define MSR_IA32_PERFEVTSEL0 0x186
+#define MSR_IA32_PERFEVTSEL1 0x187
 #define PERFEVTSEL_ENABLE (1ULL<<22)
 #define PERFEVTSEL_OS (1ULL<<17)
 #define PERFEVTSEL_USER (1ULL<<16)
 
 #define UOPS_ISSUED_ANY 0x010e
+#define INST_RETIRED_NOP 0x02c0
 
 #define MSR_IA32_FIXED_CTR_CTRL 0x38d
 #define MSR_IA32_PERF_GLOBAL_CTRL 0x38f
@@ -38,8 +41,11 @@ void execute_instruction(const uint8_t* instruction, size_t size)
     wrmsr(MSR_IA32_FIXED_CTR_CTRL, 0);
     wrmsr(MSR_IA32_PERF_GLOBAL_CTRL, (1ULL<<0)|(1ULL<<1));
     wrmsr(MSR_IA32_PERFEVTSEL0, 0);
+    wrmsr(MSR_IA32_PERFEVTSEL1, 0);
     wrmsr(MSR_IA32_PMC0, 0);
+    wrmsr(MSR_IA32_PMC1, 0);
     wrmsr(MSR_IA32_PERFEVTSEL0, PERFEVTSEL_USER | PERFEVTSEL_ENABLE | UOPS_ISSUED_ANY);
+    wrmsr(MSR_IA32_PERFEVTSEL1, PERFEVTSEL_USER | PERFEVTSEL_ENABLE | INST_RETIRED_NOP);
 
     __asm__("clflush [%0]"::"r"(user_code_page+0x1000-size));
     enter_user(user_code_page + 0x1000 - size, NULL);
@@ -54,6 +60,7 @@ void execute_current_instruction(void)
     execute_instruction(instruction_bytes, cur_instruction_length);
 }
 
+#define EXCEPTION_DEBUG 1
 #define EXCEPTION_INVALID_OPCODE 6
 #define EXCEPTION_PAGE_FAULT 14
 #define PF_USER (1ULL<<2)
@@ -79,21 +86,15 @@ void increment_instruction_length_and_retry_exec(void)
     execute_current_instruction();
 }
 
-void execute_ud(void)
-{
-    uint8_t ud2[] = { 0x0f, 0x0b };
-    execute_instruction(ud2, sizeof(ud2));
-}
 
-bool measuring_ud_uops_issued = true;
-uint64_t ud_uops_issued_any = (uint64_t)-1;
-uint64_t last_uops_issued_any = (uint64_t)-1;
 
-size_t instructions_saved = 0;
-size_t kernel_exceptions = 0;
-size_t kernel_page_faults = 0;
-size_t hidden_instructions = 0;
-size_t machine_checks = 0;
+
+static size_t instructions_saved = 0;
+static size_t kernel_exceptions = 0;
+static size_t kernel_page_faults = 0;
+static size_t hidden_instructions = 0;
+static size_t nops_with_side_effects = 0;
+static size_t machine_checks = 0;
 
 static CHAR16* exception_names[] = {
     L"#DE", L"#DB", L"NMI", L"#BP",
@@ -107,7 +108,8 @@ static CHAR16* exception_names[] = {
 void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t instruction_length, uint64_t extra_info, uint64_t uops_issued_any)
 {
     printf(L"Kernel: page faults: 0x%lx, exceptions: 0x%lx\r\n", kernel_page_faults, kernel_exceptions);
-    printf(L"Hidden instructions: 0x%lx, machine checks: 0x%lx\r\n", hidden_instructions, machine_checks);
+    printf(L"Hidden instructions: 0x%lx, NOPs with side effects: 0x%lx\r\n", hidden_instructions, nops_with_side_effects);
+    printf(L"Machine checks: 0x%lx\r\n", machine_checks);
     print(L"Current instruction info:\r\n");
     uint64_t exception_number = context->exception_number;
     bool has_error_code = ((1ULL << exception_number) & EXCEPTIONS_WITH_ERROR_CODE_MASK) != 0;
@@ -239,6 +241,25 @@ static bool contains_repeating_prefixes(const uint8_t* bytes, size_t length)
     return false;
 }
 
+void execute_ud(void)
+{
+    uint8_t ud2[] = { 0x0f, 0x0b };
+    execute_instruction(ud2, sizeof(ud2));
+}
+
+void execute_nop(void)
+{
+    uint8_t nop[] = { 0x90 };
+    execute_instruction(nop, sizeof(nop));
+}
+
+bool measuring_ud_uops_issued = true;
+bool measuring_nop_uops_issued = false;
+uint64_t ud_uops_issued_any = (uint64_t)-1;
+uint64_t nop_uops_issued_any = (uint64_t)-1;
+uint64_t last_uops_issued_any = (uint64_t)-1;
+
+
 #define MSR_IA32_MCG_CAP 0x179
 #define MCG_CAP_REPORTING_BANKS_COUNT_MASK 0xfULL
 void handle_exception(struct context* context)
@@ -247,6 +268,7 @@ void handle_exception(struct context* context)
     struct iretq_frame* frame = has_error_code ? &context->iretq_frame_with_error_code : &context->iretq_frame_no_error_code;
 
     wrmsr(MSR_IA32_PERFEVTSEL0, 0);
+    wrmsr(MSR_IA32_PERFEVTSEL1, 0);
     if (measuring_ud_uops_issued)
     {
         if (context->exception_number != EXCEPTION_INVALID_OPCODE)
@@ -271,11 +293,49 @@ void handle_exception(struct context* context)
         }
 
         measuring_ud_uops_issued = false;
+        measuring_nop_uops_issued = true;
 
         printf(L"UD issued micro-ops count: 0x%lx\r\n", ud_uops_issued_any);
-        execute_current_instruction();
+        execute_nop();
     }
 
+    if (measuring_nop_uops_issued)
+    {
+        if (context->exception_number != EXCEPTION_DEBUG)
+        {
+            printf(L"Unexpected exception %lx while measuring micro-ops count of a known NOP\r\n", context->exception_number);
+            if (has_error_code)
+            {
+                printf(L"Error code: %lx\r\n", context->error_code);
+            }
+
+            printf(L"CS:RIP = %lx:%lx RFLAGS=%lx\r\n", frame->cs, frame->rip, frame->rflags);
+            printf(L"SS:RSP = %lx:%lx\r\n", frame->ss, frame->rsp);
+            halt();
+        }
+
+        uint64_t nops_retired = rdmsr(MSR_IA32_PMC1);
+
+        if (nops_retired != 1)
+        {
+            printf(L"Unexpected count of NOPs retired: expected: 1, got: 0x%lx\r\n", nops_retired);
+            halt();
+        }
+
+        uint64_t current_nop_uops_issued_any = rdmsr(MSR_IA32_PMC0);
+
+
+        if (nop_uops_issued_any != current_nop_uops_issued_any)
+        {
+            nop_uops_issued_any = current_nop_uops_issued_any;
+            execute_nop();
+        }
+
+        measuring_nop_uops_issued = false;
+
+        printf(L"NOP issued micro-ops count: 0x%lx\r\n", nop_uops_issued_any);
+        execute_current_instruction();
+    }
     bool is_interesting_instruction = false;
 
     if (context->exception_number == EXCEPTION_PAGE_FAULT && (context->error_code & PF_INSTRUCTION_FETCH) && (frame->cs & 3) == 3)
@@ -290,6 +350,7 @@ void handle_exception(struct context* context)
     }
 
     uint64_t uops_issued_any = rdmsr(MSR_IA32_PMC0);
+    uint64_t nops_retired = rdmsr(MSR_IA32_PMC1);
     uint64_t extra_info = 0;
 
     switch (context->exception_number)
@@ -303,6 +364,33 @@ void handle_exception(struct context* context)
         }
         __attribute__((fallthrough));
     default:
+        if (nops_retired)
+        {
+            if (context->exception_number != EXCEPTION_DEBUG)
+            {
+                is_interesting_instruction = true;
+                nops_with_side_effects++;
+            }
+            else if (last_uops_issued_any != uops_issued_any)
+            {
+                last_uops_issued_any = uops_issued_any;
+                execute_current_instruction();
+            }
+            else
+            {
+                last_uops_issued_any = (uint64_t)-1;
+                if (uops_issued_any != nop_uops_issued_any)
+                {
+                    if (!is_interesting_instruction)
+                    {
+                        extra_info = uops_issued_any;
+                    }
+                    is_interesting_instruction = true;
+                    nops_with_side_effects++;
+                }
+            }
+        }
+
         if ((frame->cs & 3) != 3)
         {
             is_interesting_instruction = true;
