@@ -24,6 +24,8 @@ static inline void __attribute__((noreturn)) halt(void)
 
 #define UOPS_ISSUED_ANY 0x010e
 
+#define MSR_IA32_FIXED_CTR_CTRL 0x38d
+#define MSR_IA32_PERF_GLOBAL_CTRL 0x38f
 uint8_t* user_code_page = NULL;
 void __attribute__((noreturn)) enter_user(void* rip, void* rsp);
 void execute_instruction(const uint8_t* instruction, size_t size)
@@ -33,6 +35,8 @@ void execute_instruction(const uint8_t* instruction, size_t size)
         user_code_page[0x1000 - size + i] = instruction[i];
     }
 
+    wrmsr(MSR_IA32_FIXED_CTR_CTRL, 0);
+    wrmsr(MSR_IA32_PERF_GLOBAL_CTRL, (1ULL<<0)|(1ULL<<1));
     wrmsr(MSR_IA32_PERFEVTSEL0, 0);
     wrmsr(MSR_IA32_PMC0, 0);
     wrmsr(MSR_IA32_PERFEVTSEL0, PERFEVTSEL_USER | PERFEVTSEL_ENABLE | UOPS_ISSUED_ANY);
