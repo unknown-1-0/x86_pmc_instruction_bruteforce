@@ -88,7 +88,7 @@ void increment_instruction_length_and_retry_exec(void)
 
 
 
-
+static size_t unique_instructions_executed = 0;
 static size_t instructions_saved = 0;
 static size_t kernel_exceptions = 0;
 static size_t kernel_page_faults = 0;
@@ -107,6 +107,8 @@ static CHAR16* exception_names[] = {
 
 void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t instruction_length, uint64_t extra_info, uint64_t uops_issued_any)
 {
+    printf(L"Unique instructions executed: 0x%lx, saved: 0x%lx\r\n", unique_instructions_executed, instructions_saved);
+    printf(L"Current save file size: 0x%lx bytes\r\n", get_save_file_position());
     printf(L"Kernel: page faults: 0x%lx, exceptions: 0x%lx\r\n", kernel_page_faults, kernel_exceptions);
     printf(L"Hidden instructions: 0x%lx, NOPs with side effects: 0x%lx\r\n", hidden_instructions, nops_with_side_effects);
     printf(L"Machine checks: 0x%lx\r\n", machine_checks);
@@ -137,7 +139,7 @@ void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t inst
         printf(L" %hx", instruction_bytes[i]);
     }
 
-    printf(L" (extra info: 0x%lx, UOPS_ISSUED.ANY = 0x%lx)\r\n\r\n", extra_info, uops_issued_any);
+    printf(L" (extra info: 0x%lx, UOPS_ISSUED.ANY = 0x%lx)\r\n", extra_info, uops_issued_any);
 }
 
 static bool contains_repeating_prefixes(const uint8_t* bytes, size_t length)
@@ -255,6 +257,7 @@ uint64_t ud_uops_issued_any = (uint64_t)-1;
 uint64_t nop_uops_issued_any = (uint64_t)-1;
 uint64_t last_uops_issued_any = (uint64_t)-1;
 
+bool flush_required = false;
 
 #define MSR_IA32_MCG_CAP 0x179
 #define MCG_CAP_REPORTING_BANKS_COUNT_MASK 0xfULL
@@ -332,7 +335,6 @@ void handle_exception(struct context* context)
         printf(L"NOP issued micro-ops count: 0x%lx\r\n", nop_uops_issued_any);
         execute_current_instruction();
     }
-    bool is_interesting_instruction = false;
 
     if (context->exception_number == EXCEPTION_PAGE_FAULT && (context->error_code & PF_INSTRUCTION_FETCH) && (frame->cs & 3) == 3)
     {
@@ -345,6 +347,7 @@ void handle_exception(struct context* context)
         }
     }
 
+    bool is_interesting_instruction = false;
     uint64_t uops_issued_any = rdmsr(MSR_IA32_PMC0);
     uint64_t nops_retired = rdmsr(MSR_IA32_PMC1);
     uint64_t extra_info = 0;
@@ -432,12 +435,12 @@ void handle_exception(struct context* context)
         break;
     }
 
+
     if (is_interesting_instruction)
     {
         if (save_instruction_data(context, instruction_bytes, cur_instruction_length, extra_info) != EFI_SUCCESS)
         {
             print(L"Saving instruction info failed.\r\n");
-            printf(L"0x%lx instructions were saved in total (not including this one) (0x%lx bytes total)\r\n", instructions_saved, get_save_file_position());
 
             dump_stats(context, instruction_bytes, cur_instruction_length, extra_info, uops_issued_any);
 
@@ -446,17 +449,21 @@ void handle_exception(struct context* context)
             print(L"Halting CPU\r\n");
             halt();
         }
+        flush_required = true;
         instructions_saved++;
+    }
 
-        if (instructions_saved % 0x10000 == 0)
+    unique_instructions_executed++;
+    if (unique_instructions_executed % 0x100000 == 0)
+    {
+        dump_stats(context, instruction_bytes, cur_instruction_length, extra_info, uops_issued_any);
+        if (flush_required)
         {
-            printf(L"0x%lx instructions were saved (0x%lx bytes), flushing\r\n", instructions_saved, get_save_file_position());
-
-            dump_stats(context, instruction_bytes, cur_instruction_length, extra_info, uops_issued_any);
-
-
+            print(L"Flushing save file\r\n");
             flush_save_file();
+            flush_required = false;
         }
+        print(L"\r\n");
     }
 
     if (cur_instruction_length == last_instruction_length)
