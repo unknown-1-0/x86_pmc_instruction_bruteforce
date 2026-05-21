@@ -454,7 +454,7 @@ void handle_exception(struct context* context)
     }
 
     unique_instructions_executed++;
-    if (unique_instructions_executed % 0x100000 == 0)
+    if (unique_instructions_executed % 0x1000000 == 0)
     {
         dump_stats(context, instruction_bytes, cur_instruction_length, extra_info, uops_issued_any);
         if (flush_required)
