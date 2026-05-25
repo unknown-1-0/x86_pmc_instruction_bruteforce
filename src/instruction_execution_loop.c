@@ -93,6 +93,7 @@ static size_t instructions_saved = 0;
 static size_t kernel_exceptions = 0;
 static size_t kernel_page_faults = 0;
 static size_t hidden_instructions = 0;
+static size_t malformed_but_valid_instructions = 0;
 static size_t nops_with_side_effects = 0;
 static size_t machine_checks = 0;
 
@@ -110,8 +111,8 @@ void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t inst
     printf(L"Unique instructions executed: 0x%lx, saved: 0x%lx\r\n", unique_instructions_executed, instructions_saved);
     printf(L"Current save file size: 0x%lx bytes\r\n", get_save_file_position());
     printf(L"Kernel: page faults: 0x%lx, exceptions: 0x%lx\r\n", kernel_page_faults, kernel_exceptions);
-    printf(L"Hidden instructions: 0x%lx, NOPs with side effects: 0x%lx\r\n", hidden_instructions, nops_with_side_effects);
-    printf(L"Machine checks: 0x%lx\r\n", machine_checks);
+    printf(L"Hidden instructions: 0x%lx, malformed but valid instructions: 0x%lx\r\n", hidden_instructions, malformed_but_valid_instructions);
+    printf(L"NOPs with side effects: 0x%lx, Machine checks: 0x%lx\r\n", nops_with_side_effects, machine_checks);
     print(L"Current instruction info:\r\n");
     uint64_t exception_number = context->exception_number;
     bool has_error_code = ((1ULL << exception_number) & EXCEPTIONS_WITH_ERROR_CODE_MASK) != 0;
@@ -143,6 +144,7 @@ void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t inst
 }
 
 #define MAX_PREFIXES 5
+static bool malformed_instruction_expect_ud = false;
 static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t length)
 {
     bool segment_override_seen = false;
@@ -153,6 +155,7 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
     bool rep_seen = false;
     bool rex_seen = false;
 
+    malformed_instruction_expect_ud = false;
     for (size_t i = 0; i < length; i++)
     {
         if (i == MAX_PREFIXES)
@@ -169,75 +172,70 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
         case 0x3e:
         case 0x64:
         case 0x65:
-            if (segment_override_seen)
+            if (rex_seen || segment_override_seen)
             {
                 return true;
             }
             segment_override_seen = true;
-            break;
+            continue;
         case 0x66:
-            if (operand_size_override_seen)
+            if (rex_seen || operand_size_override_seen)
             {
                 return true;
             }
             operand_size_override_seen = true;
-            break;
+            continue;
         case 0x67:
-            if (address_size_override_seen)
+            if (rex_seen || address_size_override_seen)
             {
                 return true;
             }
             address_size_override_seen = true;
-            break;
+            continue;
         case 0xf0:
-            if (lock_seen)
+            if (rex_seen || lock_seen)
             {
                 return true;
             }
             lock_seen = true;
-            break;
+            continue;
         case 0xf2:
-            if (repne_seen)
+            if (rex_seen || repne_seen)
             {
                 return true;
             }
             repne_seen = true;
-            break;
+            continue;
         case 0xf3:
-            if (rep_seen)
+            if (rex_seen || rep_seen)
             {
                 return true;
             }
             rep_seen = true;
-            break;
+            continue;
         case 0xc4:
         case 0xc5:
             // VEX prefix contains various fields in the next 1-2 bytes,
             // and, if it's present, the opcode bytes are located immediately after it
-            return false;
-        case 0x40:
-        case 0x41:
-        case 0x42:
-        case 0x43:
-        case 0x44:
-        case 0x45:
-        case 0x46:
-        case 0x47:
-        case 0x48:
-        case 0x49:
-        case 0x4a:
-        case 0x4b:
-        case 0x4c:
-        case 0x4d:
-        case 0x4e:
-        case 0x4f:
+
+            // Intel SDM says that instructions with 0x66, 0xf2, 0xf3, LOCK and REX prefixes preceding VEX will #UD.
+            // However, VEX prefix can only encode 0x66, 0xf2, 0xf3 prefixes (+ REX, in 3-byte form)
+            // For this reason, keep LOCK prefix (and REX, if using 2-byte form of VEX) just in case some instruction hide there
+            bool invalid = (byte == 0xc4 && rex_seen) || operand_size_override_seen || rep_seen || repne_seen;
+            malformed_instruction_expect_ud = (!invalid && ((byte == 0xc5 && rex_seen) || lock_seen));
+            return invalid;
+        }
+
+        if ((byte & 0xf0) == 0x40)
+        {
             if (rex_seen)
             {
                 return true;
             }
             rex_seen = true;
-            break;
-        default:
+        }
+        else
+        {
             return false;
         }
     }
@@ -360,6 +358,12 @@ void handle_exception(struct context* context)
     {
         is_interesting_instruction = true;
         kernel_exceptions++;
+    }
+
+    if (__builtin_expect(malformed_instruction_expect_ud && context->exception_number != EXCEPTION_INVALID_OPCODE, 0))
+    {
+        is_interesting_instruction = true;
+        malformed_but_valid_instructions++;
     }
 
     uint64_t uops_issued_any = rdmsr(MSR_IA32_PMC0);
