@@ -142,7 +142,8 @@ void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t inst
     printf(L" (extra info: 0x%lx, UOPS_ISSUED.ANY = 0x%lx)\r\n", extra_info, uops_issued_any);
 }
 
-static bool contains_repeating_prefixes(const uint8_t* bytes, size_t length)
+#define MAX_PREFIXES 5
+static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t length)
 {
     bool segment_override_seen = false;
     bool operand_size_override_seen = false;
@@ -154,6 +155,11 @@ static bool contains_repeating_prefixes(const uint8_t* bytes, size_t length)
 
     for (size_t i = 0; i < length; i++)
     {
+        if (i == MAX_PREFIXES)
+        {
+            return true;
+        }
+
         uint8_t byte = bytes[i];
         switch(byte)
         {
@@ -494,7 +500,7 @@ void handle_exception(struct context* context)
     do
     {
         instruction_bytes[cur_byte_index]++;
-    } while(contains_repeating_prefixes(instruction_bytes, cur_instruction_length));
+    } while(contains_invalid_count_of_prefixes(instruction_bytes, cur_instruction_length));
 
     execute_current_instruction();
 }
