@@ -51,7 +51,7 @@ void execute_instruction(const uint8_t* instruction, size_t size)
     enter_user(user_code_page + 0x1000 - size, NULL);
 }
 
-uint8_t instruction_bytes[18] = {0x00};
+uint8_t instruction_bytes[15] = {0x00};
 size_t cur_instruction_length = 1;
 size_t cur_byte_index = 0;
 
@@ -336,18 +336,26 @@ void handle_exception(struct context* context)
         execute_current_instruction();
     }
 
-    if (context->exception_number == EXCEPTION_PAGE_FAULT && (context->error_code & PF_INSTRUCTION_FETCH) && (frame->cs & 3) == 3)
-    {
-        uint64_t cr2;
-        __asm__("mov %0, cr2":"=r"(cr2));
+    bool is_interesting_instruction = false;
 
-        if (cr2 == (size_t)user_code_page + 0x1000 && frame->rip != cr2)
+    if (__builtin_expect((frame->cs & 3) == 3, 1))
+    {
+        if (__builtin_expect(context->exception_number == EXCEPTION_PAGE_FAULT && (context->error_code & PF_INSTRUCTION_FETCH), 1))
         {
-            increment_instruction_length_and_retry_exec();
+            uint64_t cr2 = read_cr2();
+
+            if (__builtin_expect(cr2 == (size_t)user_code_page + 0x1000 && frame->rip != cr2, 1))
+            {
+                increment_instruction_length_and_retry_exec();
+            }
         }
     }
+    else
+    {
+        is_interesting_instruction = true;
+        kernel_exceptions++;
+    }
 
-    bool is_interesting_instruction = false;
     uint64_t uops_issued_any = rdmsr(MSR_IA32_PMC0);
     uint64_t nops_retired = rdmsr(MSR_IA32_PMC1);
     uint64_t extra_info = 0;
@@ -388,12 +396,6 @@ void handle_exception(struct context* context)
                     nops_with_side_effects++;
                 }
             }
-        }
-
-        if ((frame->cs & 3) != 3)
-        {
-            is_interesting_instruction = true;
-            kernel_exceptions++;
         }
         break;
     case EXCEPTION_INVALID_OPCODE:
