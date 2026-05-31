@@ -143,7 +143,51 @@ void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t inst
     printf(L" (extra info: 0x%lx, UOPS_ISSUED.ANY = 0x%lx)\r\n", extra_info, uops_issued_any);
 }
 
-#define MAX_PREFIXES 5
+static bool is_prefix(uint8_t byte)
+{
+    // Segment override prefixes
+    if ((byte & ~(0x26U ^ 0x3eU)) == 0x26U)
+    {
+        return true;
+    }
+
+    // REX
+    if ((byte & 0xf0U) == 0x40)
+    {
+        return true;
+    }
+
+    switch(byte & 0xfeU)
+    {
+    case 0x66: // Operand (0x66)/address (0x67) size override
+    case 0x64: // FS (0x64)/GS (0x65) segment override
+    case 0xc4: // VEX (0xC4/0xC5)
+    case 0xf2: // REPNE (0xF2) / REP/REPE (0xF3)
+        return true;
+    default:
+        return byte == 0xf0; // LOCK prefix
+    }
+}
+
+static size_t count_prefixes(const uint8_t* bytes, size_t length)
+{
+    size_t prefixes = 0;
+    while (prefixes < length)
+    {
+        if (is_prefix(bytes[prefixes]))
+        {
+            prefixes++;
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    return prefixes;
+}
+
+#define MAX_PREFIXES 2
 static bool malformed_instruction_expect_ud = false;
 static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t length)
 {
@@ -224,19 +268,20 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
             bool invalid = (byte == 0xc4 && rex_seen) || operand_size_override_seen || rep_seen || repne_seen;
             malformed_instruction_expect_ud = (!invalid && ((byte == 0xc5 && rex_seen) || lock_seen));
             return invalid;
-        }
-
-        if ((byte & 0xf0) == 0x40)
-        {
-            if (rex_seen)
+        default:
+            if ((byte & 0xf0U) == 0x40U)
             {
-                return true;
+                if (rex_seen)
+                {
+                    return true;
+                }
+                rex_seen = true;
+                continue;
             }
-            rex_seen = true;
-        }
-        else
-        {
-            return false;
+            else
+            {
+                return false;
+            }
         }
     }
 
@@ -478,7 +523,8 @@ void handle_exception(struct context* context)
         print(L"\r\n");
     }
 
-    if (cur_instruction_length == last_instruction_length)
+    bool cur_byte_is_prefix = cur_byte_index < count_prefixes(instruction_bytes, cur_instruction_length);
+    if (cur_instruction_length == last_instruction_length && !cur_byte_is_prefix)
     {
         while (instruction_bytes[cur_byte_index] == 0xff)
         {
