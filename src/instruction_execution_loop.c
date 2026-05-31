@@ -174,9 +174,16 @@ static size_t count_prefixes(const uint8_t* bytes, size_t length)
     size_t prefixes = 0;
     while (prefixes < length)
     {
-        if (is_prefix(bytes[prefixes]))
+	uint8_t byte = bytes[prefixes];
+        if (is_prefix(byte))
         {
             prefixes++;
+
+	    // VEX prefix, if present, is the last prefix
+	    if ((byte & 0xfeU) == 0xc4U)
+	    {
+		break;
+	    }
         }
         else
         {
