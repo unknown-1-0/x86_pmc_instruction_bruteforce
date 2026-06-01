@@ -86,8 +86,6 @@ void increment_instruction_length_and_retry_exec(void)
     execute_current_instruction();
 }
 
-
-
 static size_t unique_instructions_executed = 0;
 static size_t instructions_saved = 0;
 static size_t kernel_exceptions = 0;
@@ -179,11 +177,11 @@ static size_t count_prefixes(const uint8_t* bytes, size_t length)
         {
             prefixes++;
 
-	    // VEX prefix, if present, is the last prefix
-	    if ((byte & 0xfeU) == 0xc4U)
-	    {
-		break;
-	    }
+            // VEX prefix, if present, is the last prefix
+	        if ((byte & 0xfeU) == 0xc4U)
+            {
+                break;
+            }
         }
         else
         {
@@ -209,11 +207,6 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
     malformed_instruction_expect_ud = false;
     for (size_t i = 0; i < length; i++)
     {
-        if (i == MAX_PREFIXES)
-        {
-            return true;
-        }
-
         uint8_t byte = bytes[i];
         switch(byte)
         {
@@ -228,42 +221,42 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
                 return true;
             }
             segment_override_seen = true;
-            continue;
+            break;
         case 0x66:
             if (rex_seen || operand_size_override_seen)
             {
                 return true;
             }
             operand_size_override_seen = true;
-            continue;
+            break;
         case 0x67:
             if (rex_seen || address_size_override_seen)
             {
                 return true;
             }
             address_size_override_seen = true;
-            continue;
+            break;
         case 0xf0:
             if (rex_seen || lock_seen)
             {
                 return true;
             }
             lock_seen = true;
-            continue;
+            break;
         case 0xf2:
             if (rex_seen || repne_seen)
             {
                 return true;
             }
             repne_seen = true;
-            continue;
+            break;
         case 0xf3:
             if (rex_seen || rep_seen)
             {
                 return true;
             }
             rep_seen = true;
-            continue;
+            break;
         case 0xc4:
         case 0xc5:
             // VEX prefix contains various fields in the next 1-2 bytes,
@@ -283,15 +276,19 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
                     return true;
                 }
                 rex_seen = true;
-                continue;
+                break;
             }
             else
             {
                 return false;
             }
         }
-    }
 
+        if (i >= MAX_PREFIXES)
+        {
+            return true;
+        }
+    }
     return false;
 }
 
@@ -499,7 +496,6 @@ void handle_exception(struct context* context)
         break;
     }
 
-
     if (is_interesting_instruction)
     {
         if (save_instruction_data(context, instruction_bytes, cur_instruction_length, extra_info) != EFI_SUCCESS)
@@ -556,6 +552,23 @@ void handle_exception(struct context* context)
 
     do
     {
+        if (__builtin_expect(instruction_bytes[cur_byte_index] == 0xff, 0))
+        {
+            print(L"BUG: Softlock detected!\r\n");
+            printf(L"Current: instruction length: 0x%lx, byte index: 0x%lx\r\n", cur_instruction_length, cur_byte_index);
+            printf(L"Last instruction length: 0x%lx\r\n", last_instruction_length);
+            print(L"Instruction bytes:");
+
+            for (size_t i = 0; i < cur_instruction_length; i++)
+            {
+                printf(L" %hx", instruction_bytes[i]);
+            }
+
+            print(L"\r\nClosing save file\r\n");
+            close_save_file();
+            print(L"Halting CPU\r\n");
+            halt();
+        }
         instruction_bytes[cur_byte_index]++;
     } while(contains_invalid_count_of_prefixes(instruction_bytes, cur_instruction_length));
 
