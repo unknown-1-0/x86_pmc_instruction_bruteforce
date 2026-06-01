@@ -6,6 +6,10 @@
 EFI_FILE_PROTOCOL* output_file = NULL;
 EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 {
+#ifdef _NO_SAVE
+    print(L"No output mode enabled, skipping save file creation\r\n");
+    return EFI_SUCCESS;
+#endif
     EFI_GUID loaded_image_protocol_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
 
     EFI_LOADED_IMAGE_PROTOCOL* loaded_image_protocol = NULL;
@@ -70,6 +74,9 @@ EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 
 EFI_STATUS save_instruction_data(struct context* context, uint8_t* instruction_bytes, size_t length, uint64_t extra_data)
 {
+#ifdef _NO_SAVE
+    return EFI_SUCCESS;
+#endif
     // Exception number does not exceed 0x20, so this is safe to do to save space
     uint8_t exception_number = (uint8_t)context->exception_number;
     UINTN write_size = sizeof(exception_number); 
@@ -129,20 +136,30 @@ EFI_STATUS save_instruction_data(struct context* context, uint8_t* instruction_b
 
 EFI_STATUS flush_save_file(void)
 {
+#ifndef _NO_SAVE
     return output_file->Flush(output_file);
+#else
+    return EFI_SUCCESS;
+#endif
 }
 
 UINT64 get_save_file_position(void)
 {
+#ifndef _NO_SAVE
     UINT64 position = (UINT64)-1;
 
     output_file->GetPosition(output_file, &position);
 
     return position;
+#else
+    return 0;
+#endif
 }
 
 void close_save_file(void)
 {
+#ifndef _NO_SAVE
     output_file->Close(output_file);
     output_file = NULL;
+#endif
 }
