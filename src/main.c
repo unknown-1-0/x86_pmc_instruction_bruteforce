@@ -1,10 +1,13 @@
-#include "control_registers.h"
+#include <control_registers.h>
 #include <efi.h>
-#include "msr.h"
+#include <disasm.h>
+#include <halt.h>
+#include <msr.h>
 #include "print.h"
 #include <stdbool.h>
 #include <stdint.h>
-#include "system_tables_setup.h"
+#include <string_init.h>
+#include <system_tables_setup.h>
 
 // Interesting Skylake events
 // From https://github.com/intel/perfmon/blob/main/SKL/events/skylake_core.json
@@ -57,16 +60,6 @@
 
 #define MSR_IA32_MCG_CTL 0x17b
 
-static inline void __attribute__((noreturn)) halt(void)
-{
-    while(1)
-    {
-        __asm__("cli");
-        __asm__("hlt");
-    }
-}
-
-
 #define MSR_IA32_EFER 0xc0000080
 #define EFER_NXE (1ULL<<11)
 void load_segments(uint16_t code_segment, uint16_t stack_segment, uint16_t task_segment);
@@ -100,9 +93,9 @@ EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 #define CR4_OSXSAVE (1ULL<<18)
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 {
-    (void)ImageHandle;
-
     print_init(SystemTable);
+    string_init(SystemTable);
+    disasm_init();
 
     EFI_PHYSICAL_ADDRESS kernel_stack_pages = 0;
     EFI_STATUS status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, KERNEL_STACK_PAGES, &kernel_stack_pages);

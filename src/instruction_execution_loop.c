@@ -1,10 +1,14 @@
 #include "control_registers.h"
+#include "disasm.h"
 #include "exception_context.h"
 #include "msr.h"
 #include "print.h"
 #include "save_file.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <xed-decode.h>
+#include <xed-decoded-inst-api.h>
+
 
 static inline void __attribute__((noreturn)) halt(void)
 {
@@ -90,10 +94,12 @@ static size_t unique_instructions_executed = 0;
 static size_t instructions_saved = 0;
 static size_t kernel_exceptions = 0;
 static size_t kernel_page_faults = 0;
-static size_t hidden_instructions = 0;
+static size_t hidden_behind_ud_instructions = 0;
+static size_t undocumented_instructions = 0;
 static size_t malformed_but_valid_instructions = 0;
 static size_t nops_with_side_effects = 0;
 static size_t machine_checks = 0;
+static size_t cpu_xed_length_mismatches = 0;
 
 static CHAR16* exception_names[] = {
     L"#DE", L"#DB", L"NMI", L"#BP",
@@ -104,13 +110,14 @@ static CHAR16* exception_names[] = {
     L"#VE", L"#CP"
 };
 
-void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t instruction_length, uint64_t extra_info, uint64_t uops_issued_any)
+void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t instruction_length, uint64_t extra_info, uint64_t uops_issued_any, uint64_t xed_length)
 {
     printf(L"Unique instructions executed: 0x%lx, saved: 0x%lx\r\n", unique_instructions_executed, instructions_saved);
     printf(L"Current save file size: 0x%lx bytes\r\n", get_save_file_position());
     printf(L"Kernel: page faults: 0x%lx, exceptions: 0x%lx\r\n", kernel_page_faults, kernel_exceptions);
-    printf(L"Hidden instructions: 0x%lx, malformed but valid instructions: 0x%lx\r\n", hidden_instructions, malformed_but_valid_instructions);
-    printf(L"NOPs with side effects: 0x%lx, Machine checks: 0x%lx\r\n", nops_with_side_effects, machine_checks);
+    printf(L"Undocumented instructions: hidden behind #UD: 0x%lx, not hidden: 0x%lx\r\n", hidden_behind_ud_instructions, undocumented_instructions);
+    printf(L"Malformed but valid instructions: 0x%lx, NOPs with side effects: 0x%lx\r\n", malformed_but_valid_instructions, nops_with_side_effects);
+    printf(L"Machine checks: 0x%lx, Intel XED vs CPU decoder length mismatches: 0x%lx\r\n", machine_checks, cpu_xed_length_mismatches);
     print(L"Current instruction info:\r\n");
     uint64_t exception_number = context->exception_number;
     bool has_error_code = ((1ULL << exception_number) & EXCEPTIONS_WITH_ERROR_CODE_MASK) != 0;
@@ -138,7 +145,7 @@ void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t inst
         printf(L" %hx", instruction_bytes[i]);
     }
 
-    printf(L" (extra info: 0x%lx, UOPS_ISSUED.ANY = 0x%lx)\r\n", extra_info, uops_issued_any);
+    printf(L" (extra info: 0x%lx, UOPS_ISSUED.ANY = 0x%lx, Intel XED length: 0x%lx)\r\n", extra_info, uops_issued_any, xed_length);
 }
 
 static bool is_prefix(uint8_t byte)
@@ -192,7 +199,7 @@ static size_t count_prefixes(const uint8_t* bytes, size_t length)
     return prefixes;
 }
 
-#define MAX_PREFIXES 2
+#define MAX_PREFIXES 1
 static bool malformed_instruction_expect_ud = false;
 static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t length)
 {
@@ -409,6 +416,7 @@ void handle_exception(struct context* context)
         kernel_exceptions++;
     }
 
+
     if (__builtin_expect(malformed_instruction_expect_ud && context->exception_number != EXCEPTION_INVALID_OPCODE, 0))
     {
         is_interesting_instruction = true;
@@ -418,6 +426,15 @@ void handle_exception(struct context* context)
     uint64_t uops_issued_any = rdmsr(MSR_IA32_PMC0);
     uint64_t nops_retired = rdmsr(MSR_IA32_PMC1);
     uint64_t extra_info = 0;
+
+    uint64_t disasm_length = disasm_get_instruction_length(instruction_bytes, cur_instruction_length);
+    bool instruction_is_known = (disasm_length != 0);
+
+    if (instruction_is_known && cur_instruction_length != disasm_length)
+    {
+        is_interesting_instruction = true;
+        cpu_xed_length_mismatches++;
+    }
 
     switch (context->exception_number)
     {
@@ -430,6 +447,12 @@ void handle_exception(struct context* context)
         }
         __attribute__((fallthrough));
     default:
+        if (!instruction_is_known)
+        {
+            is_interesting_instruction = true;
+            undocumented_instructions++;
+        }
+
         if (nops_retired)
         {
             if (context->exception_number != EXCEPTION_DEBUG)
@@ -467,11 +490,11 @@ void handle_exception(struct context* context)
 
             last_uops_issued_any = (uint64_t)-1;
 
-            if (uops_issued_any != ud_uops_issued_any)
+            if (uops_issued_any != ud_uops_issued_any && !instruction_is_known)
             {
                 is_interesting_instruction = true;
                 extra_info = uops_issued_any;
-                hidden_instructions++;
+                hidden_behind_ud_instructions++;
             }
         }
         break;
@@ -496,13 +519,15 @@ void handle_exception(struct context* context)
         break;
     }
 
+
+
     if (is_interesting_instruction)
     {
         if (save_instruction_data(context, instruction_bytes, cur_instruction_length, extra_info) != EFI_SUCCESS)
         {
             print(L"Saving instruction info failed.\r\n");
 
-            dump_stats(context, instruction_bytes, cur_instruction_length, extra_info, uops_issued_any);
+            dump_stats(context, instruction_bytes, cur_instruction_length, extra_info, uops_issued_any, disasm_length);
 
             print(L"Closing save file\r\n");
             close_save_file();
@@ -516,7 +541,7 @@ void handle_exception(struct context* context)
     unique_instructions_executed++;
     if (unique_instructions_executed % 0x1000000 == 0)
     {
-        dump_stats(context, instruction_bytes, cur_instruction_length, extra_info, uops_issued_any);
+        dump_stats(context, instruction_bytes, cur_instruction_length, extra_info, uops_issued_any, disasm_length);
         if (flush_required)
         {
             print(L"Flushing save file\r\n");
