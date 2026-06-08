@@ -99,7 +99,9 @@ static size_t undocumented_instructions = 0;
 static size_t malformed_but_valid_instructions = 0;
 static size_t nops_with_side_effects = 0;
 static size_t machine_checks = 0;
+#ifdef COUNT_XED_VS_CPU_MISMATCHES
 static size_t cpu_xed_length_mismatches = 0;
+#endif
 
 static CHAR16* exception_names[] = {
     L"#DE", L"#DB", L"NMI", L"#BP",
@@ -117,7 +119,11 @@ void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t inst
     printf(L"Kernel: page faults: 0x%lx, exceptions: 0x%lx\r\n", kernel_page_faults, kernel_exceptions);
     printf(L"Undocumented instructions: hidden behind #UD: 0x%lx, not hidden: 0x%lx\r\n", hidden_behind_ud_instructions, undocumented_instructions);
     printf(L"Malformed but valid instructions: 0x%lx, NOPs with side effects: 0x%lx\r\n", malformed_but_valid_instructions, nops_with_side_effects);
+#ifdef COUNT_XED_VS_CPU_MISMATCHES
     printf(L"Machine checks: 0x%lx, Intel XED vs CPU decoder length mismatches: 0x%lx\r\n", machine_checks, cpu_xed_length_mismatches);
+#else
+    printf(L"Machine checks: 0x%lx\r\n", machine_checks);
+#endif
     print(L"Current instruction info:\r\n");
     uint64_t exception_number = context->exception_number;
     bool has_error_code = ((1ULL << exception_number) & EXCEPTIONS_WITH_ERROR_CODE_MASK) != 0;
@@ -429,13 +435,13 @@ void handle_exception(struct context* context)
 
     uint64_t disasm_length = disasm_get_instruction_length(instruction_bytes, cur_instruction_length);
     bool instruction_is_known = (disasm_length != 0);
-
+#ifdef COUNT_XED_VS_CPU_MISMATCHES
     if (instruction_is_known && cur_instruction_length != disasm_length)
     {
         is_interesting_instruction = true;
         cpu_xed_length_mismatches++;
     }
-
+#endif
     switch (context->exception_number)
     {
     case EXCEPTION_PAGE_FAULT:
