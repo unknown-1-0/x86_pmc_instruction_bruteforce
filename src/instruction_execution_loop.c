@@ -216,6 +216,9 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
     bool repne_seen = false;
     bool rep_seen = false;
     bool rex_seen = false;
+    bool vex_seen = false;
+    bool vex_invalid = false;
+    bool vex_malformed_instruction_expect_ud = false;
 
     malformed_instruction_expect_ud = false;
     for (size_t i = 0; i < length; i++)
@@ -278,9 +281,10 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
             // Intel SDM says that instructions with 0x66, 0xf2, 0xf3, LOCK and REX prefixes preceding VEX will #UD.
             // However, VEX prefix can only encode 0x66, 0xf2, 0xf3 prefixes (+ REX, in 3-byte form)
             // For this reason, keep LOCK prefix (and REX, if using 2-byte form of VEX) just in case some instruction hide there
-            bool invalid = (byte == 0xc4 && rex_seen) || operand_size_override_seen || rep_seen || repne_seen;
-            malformed_instruction_expect_ud = (!invalid && ((byte == 0xc5 && rex_seen) || lock_seen));
-            return invalid;
+            vex_invalid = (byte == 0xc4 && rex_seen) || operand_size_override_seen || rep_seen || repne_seen;
+            vex_malformed_instruction_expect_ud = (!vex_invalid && ((byte == 0xc5 && rex_seen) || lock_seen));
+            vex_seen = true;
+            break;
         default:
             if ((byte & 0xf0U) == 0x40U)
             {
@@ -300,6 +304,12 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
         if (i >= MAX_PREFIXES)
         {
             return true;
+        }
+
+        if (vex_seen)
+        {
+            malformed_instruction_expect_ud = vex_malformed_instruction_expect_ud;
+            return vex_invalid;
         }
     }
     return false;
