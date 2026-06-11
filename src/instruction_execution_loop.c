@@ -448,7 +448,18 @@ void handle_exception(struct context* context)
     }
     else
     {
+        printf(L"Kernel Exception! CS:RIP=%lx:%lx SS:RSP=%lx:%lx RFLAGS=%lx\r\n", frame->cs, frame->rip, frame->ss, frame->rsp, frame->rflags);
         is_interesting_instruction = true;
+
+        print(L"Instruction bytes:");
+
+        for (size_t i = 0; i < 0x40; i++)
+        {
+            printf(L" %hx", ((uint8_t*)frame->rip)[i]);
+        }
+
+        print(L"\r\n");
+
         kernel_exceptions++;
     }
 
