@@ -29,7 +29,9 @@ static inline void __attribute__((noreturn)) halt(void)
 #define PERFEVTSEL_USER (1ULL<<16)
 
 #define UOPS_ISSUED_ANY 0x010e
+#ifdef COUNT_NOPS
 #define INST_RETIRED_NOP 0x02c0
+#endif
 
 #define MSR_IA32_FIXED_CTR_CTRL 0x38d
 #define MSR_IA32_PERF_GLOBAL_CTRL 0x38f
@@ -43,13 +45,20 @@ void execute_instruction(const uint8_t* instruction, size_t size)
     }
 
     wrmsr(MSR_IA32_FIXED_CTR_CTRL, 0);
-    wrmsr(MSR_IA32_PERF_GLOBAL_CTRL, (1ULL<<0)|(1ULL<<1));
+    wrmsr(MSR_IA32_PERF_GLOBAL_CTRL,
+            (1ULL<<0)
+#ifdef COUNT_NOPS
+            |(1ULL<<1)
+#endif
+         );
     wrmsr(MSR_IA32_PERFEVTSEL0, 0);
-    wrmsr(MSR_IA32_PERFEVTSEL1, 0);
     wrmsr(MSR_IA32_PMC0, 0);
-    wrmsr(MSR_IA32_PMC1, 0);
     wrmsr(MSR_IA32_PERFEVTSEL0, PERFEVTSEL_USER | PERFEVTSEL_ENABLE | UOPS_ISSUED_ANY);
+#ifdef COUNT_NOPS
+    wrmsr(MSR_IA32_PERFEVTSEL1, 0);
+    wrmsr(MSR_IA32_PMC1, 0);
     wrmsr(MSR_IA32_PERFEVTSEL1, PERFEVTSEL_USER | PERFEVTSEL_ENABLE | INST_RETIRED_NOP);
+#endif
 
     __asm__("clflush [%0]"::"r"(user_code_page+0x1000-size));
     enter_user(user_code_page + 0x1000 - size, NULL);
@@ -97,7 +106,9 @@ static size_t kernel_page_faults = 0;
 static size_t hidden_behind_ud_instructions = 0;
 static size_t undocumented_instructions = 0;
 static size_t malformed_but_valid_instructions = 0;
+#ifdef COUNT_NOPS
 static size_t nops_with_side_effects = 0;
+#endif
 static size_t machine_checks = 0;
 #ifdef COUNT_XED_VS_CPU_MISMATCHES
 static size_t cpu_xed_length_mismatches = 0;
@@ -118,7 +129,11 @@ void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t inst
     printf(L"Current save file size: 0x%lx bytes\r\n", get_save_file_position());
     printf(L"Kernel: page faults: 0x%lx, exceptions: 0x%lx\r\n", kernel_page_faults, kernel_exceptions);
     printf(L"Undocumented instructions: hidden behind #UD: 0x%lx, not hidden: 0x%lx\r\n", hidden_behind_ud_instructions, undocumented_instructions);
+#ifdef COUNT_NOPS
     printf(L"Malformed but valid instructions: 0x%lx, NOPs with side effects: 0x%lx\r\n", malformed_but_valid_instructions, nops_with_side_effects);
+#else
+    printf(L"Malformed but valid instructions: 0x%lx\r\n", malformed_but_valid_instructions);
+#endif
 #ifdef COUNT_XED_VS_CPU_MISMATCHES
     printf(L"Machine checks: 0x%lx, Intel XED vs CPU decoder length mismatches: 0x%lx\r\n", machine_checks, cpu_xed_length_mismatches);
 #else
@@ -320,18 +335,20 @@ void execute_ud(void)
     uint8_t ud2[] = { 0x0f, 0x0b };
     execute_instruction(ud2, sizeof(ud2));
 }
-
+#ifdef COUNT_NOPS
 void execute_nop(void)
 {
     uint8_t nop[] = { 0x90 };
     execute_instruction(nop, sizeof(nop));
 }
 
-bool measuring_ud_uops_issued = true;
-bool measuring_nop_uops_issued = false;
-uint64_t ud_uops_issued_any = (uint64_t)-1;
-uint64_t nop_uops_issued_any = (uint64_t)-1;
-uint64_t last_uops_issued_any = (uint64_t)-1;
+static bool measuring_nop_uops_issued = false;
+static uint64_t nop_uops_issued_any = (uint64_t)-1;
+#endif
+
+static bool measuring_ud_uops_issued = true;
+static uint64_t ud_uops_issued_any = (uint64_t)-1;
+static uint64_t last_uops_issued_any = (uint64_t)-1;
 
 bool flush_required = false;
 
@@ -368,12 +385,15 @@ void handle_exception(struct context* context)
         }
 
         measuring_ud_uops_issued = false;
-        measuring_nop_uops_issued = true;
-
         printf(L"UD issued micro-ops count: 0x%lx\r\n", ud_uops_issued_any);
+
+#ifdef COUNT_NOPS
+        measuring_nop_uops_issued = true;
         execute_nop();
+#endif
     }
 
+#ifdef COUNT_NOPS
     if (measuring_nop_uops_issued)
     {
         if (context->exception_number != EXCEPTION_DEBUG)
@@ -411,7 +431,7 @@ void handle_exception(struct context* context)
         printf(L"NOP issued micro-ops count: 0x%lx\r\n", nop_uops_issued_any);
         execute_current_instruction();
     }
-
+#endif
     bool is_interesting_instruction = false;
 
     if (__builtin_expect((frame->cs & 3) == 3, 1))
@@ -440,7 +460,9 @@ void handle_exception(struct context* context)
     }
 
     uint64_t uops_issued_any = rdmsr(MSR_IA32_PMC0);
+#ifdef COUNT_NOPS
     uint64_t nops_retired = rdmsr(MSR_IA32_PMC1);
+#endif
     uint64_t extra_info = 0;
 
     uint64_t disasm_length = disasm_get_instruction_length(instruction_bytes, cur_instruction_length);
@@ -468,7 +490,7 @@ void handle_exception(struct context* context)
             is_interesting_instruction = true;
             undocumented_instructions++;
         }
-
+#ifdef COUNT_NOPS
         if (nops_retired)
         {
             if (context->exception_number != EXCEPTION_DEBUG)
@@ -495,6 +517,7 @@ void handle_exception(struct context* context)
                 }
             }
         }
+#endif
         break;
     case EXCEPTION_INVALID_OPCODE:
         {
