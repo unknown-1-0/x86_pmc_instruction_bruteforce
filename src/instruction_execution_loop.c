@@ -387,9 +387,22 @@ void handle_exception(struct context* context)
         measuring_ud_uops_issued = false;
         printf(L"UD issued micro-ops count: 0x%lx\r\n", ud_uops_issued_any);
 
+        EFI_STATUS status = save_data(&ud_uops_issued_any, sizeof(ud_uops_issued_any));
+
+        if (status != EFI_SUCCESS)
+        {
+            printf(L"Could not save UD issued micro-ops count, status = 0x%lx\r\n", status);
+            print(L"Closing save file\r\n");
+            close_save_file();
+            print(L"Halting CPU\r\n");
+            halt();
+        }
+
 #ifdef COUNT_NOPS
         measuring_nop_uops_issued = true;
         execute_nop();
+#else
+        execute_current_instruction();
 #endif
     }
 
@@ -427,8 +440,18 @@ void handle_exception(struct context* context)
         }
 
         measuring_nop_uops_issued = false;
-
         printf(L"NOP issued micro-ops count: 0x%lx\r\n", nop_uops_issued_any);
+
+        EFI_STATUS status = save_data(&nop_uops_issued_any, sizeof(nop_uops_issued_any));
+
+        if (status != EFI_SUCCESS)
+        {
+            printf(L"Could not save NOP issued micro-ops count, status = 0x%lx\r\n", status);
+            print(L"Closing save file\r\n");
+            close_save_file();
+            print(L"Halting CPU\r\n");
+            halt();
+        }
         execute_current_instruction();
     }
 #endif
