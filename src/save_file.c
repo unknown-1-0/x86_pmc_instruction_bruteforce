@@ -53,7 +53,7 @@ EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 
     if (status != EFI_SUCCESS)
     {
-        printf(L"Could not open the boot volume, status = 0x%lx\r\n");
+        printf(L"Could not open the boot volume, status = 0x%lx\r\n", (uint64_t)status);
         return status;
     }
 
@@ -66,7 +66,7 @@ EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 
     if (status != EFI_SUCCESS)
     {
-        printf(L"Could not open output file, status = 0x%lx\r\n");
+        printf(L"Could not open output file, status = 0x%lx\r\n", (uint64_t)status);
     }
 
     UINTN info_size = 0;
