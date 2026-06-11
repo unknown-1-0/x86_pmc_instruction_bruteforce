@@ -6,7 +6,7 @@
 EFI_FILE_PROTOCOL* output_file = NULL;
 EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 {
-#ifdef _NO_SAVE
+#ifdef NO_SAVE
     print(L"No output mode enabled, skipping save file creation\r\n");
     return EFI_SUCCESS;
 #endif
@@ -115,10 +115,15 @@ EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
     file_info = NULL;
     return status;
 }
+  
+EFI_STATUS save_data(void* data, size_t size)
+{
+    return output_file->Write(output_file, &size, data);
+}
 
 EFI_STATUS save_instruction_data(struct context* context, uint8_t* instruction_bytes, size_t length, uint64_t extra_data)
 {
-#ifdef _NO_SAVE
+#ifdef NO_SAVE
     return EFI_SUCCESS;
 #endif
     // Exception number does not exceed 0x20, so this is safe to do to save space
@@ -180,7 +185,7 @@ EFI_STATUS save_instruction_data(struct context* context, uint8_t* instruction_b
 
 EFI_STATUS flush_save_file(void)
 {
-#ifndef _NO_SAVE
+#ifndef NO_SAVE
     return output_file->Flush(output_file);
 #else
     return EFI_SUCCESS;
@@ -189,7 +194,7 @@ EFI_STATUS flush_save_file(void)
 
 UINT64 get_save_file_position(void)
 {
-#ifndef _NO_SAVE
+#ifndef NO_SAVE
     UINT64 position = (UINT64)-1;
 
     output_file->GetPosition(output_file, &position);
@@ -202,7 +207,7 @@ UINT64 get_save_file_position(void)
 
 void close_save_file(void)
 {
-#ifndef _NO_SAVE
+#ifndef NO_SAVE
     output_file->Close(output_file);
     output_file = NULL;
 #endif
