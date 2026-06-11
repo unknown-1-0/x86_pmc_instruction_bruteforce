@@ -69,6 +69,50 @@ EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
         printf(L"Could not open output file, status = 0x%lx\r\n");
     }
 
+    UINTN info_size = 0;
+    EFI_GUID file_info_id = EFI_FILE_INFO_ID;
+
+    status = output_file->GetInfo(output_file, &file_info_id, &info_size, NULL);
+
+    if (status != EFI_BUFFER_TOO_SMALL)
+    {
+        printf(L"Unexpected status when retrieving output file info size: 0x%lx (expected: EFI_BUFFER_TOO_SMALL (0x%lx))\r\n",
+                (uint64_t)status, (uint64_t)EFI_BUFFER_TOO_SMALL);
+        return status;
+    }
+
+    EFI_FILE_INFO* file_info = NULL;
+    status = SystemTable->BootServices->AllocatePool(EfiLoaderData, info_size, (void**)&file_info);
+
+    if (status != EFI_SUCCESS)
+    {
+        printf(L"Memory allocation for output file info failed, status = 0x%lx\r\n", status);
+        return status;
+    }
+
+    status = output_file->GetInfo(output_file, &file_info_id, &info_size, file_info);
+
+    if (status != EFI_SUCCESS)
+    {
+        printf(L"Unexpected status when retrieving output file info: 0x%lx (expected: EFI_SUCCESS (0x%lx))\r\n",
+                (uint64_t)status, (uint64_t)EFI_SUCCESS);
+    }
+    else if (file_info->FileSize != 0)
+    {
+        print(L"Output file is not empty, resetting file size to 0.\r\n");
+        file_info->FileSize = 0;
+
+        status = output_file->SetInfo(output_file, &file_info_id, info_size, file_info);
+
+        if (status != EFI_SUCCESS)
+        {
+            printf(L"Unexpected status when updating output file size: 0x%lx (expected: EFI_SUCCESS (0x%lx))\r\n",
+                    (uint64_t)status, (uint64_t)EFI_SUCCESS);
+        }
+    }
+
+    SystemTable->BootServices->FreePool(file_info);
+    file_info = NULL;
     return status;
 }
 
