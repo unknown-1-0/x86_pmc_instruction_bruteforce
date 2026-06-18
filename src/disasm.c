@@ -13,7 +13,15 @@ void disasm_init(void)
 uint64_t disasm_get_instruction_length(const uint8_t* bytes, size_t size)
 {
     xed_decoded_inst_t xedd = {0};
-    xed_decoded_inst_set_mode(&xedd, XED_MACHINE_MODE_LONG_64, XED_ADDRESS_WIDTH_64b);
+    xed_decoded_inst_set_mode(&xedd,
+#if MODE == 64
+            XED_MACHINE_MODE_LONG_64, XED_ADDRESS_WIDTH_64b
+#elif MODE == 32
+            XED_MACHINE_MODE_LONG_COMPAT_32, XED_ADDRESS_WIDTH_32b
+#else
+#error Unknown CPU mode
+#endif
+            );
     xed_decoded_inst_set_input_chip(&xedd, XED_CHIP_SKYLAKE);
 
     if (xed_ild_decode(&xedd, bytes, size) != XED_ERROR_NONE)

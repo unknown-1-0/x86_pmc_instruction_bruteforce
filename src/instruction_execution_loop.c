@@ -176,13 +176,13 @@ static bool is_prefix(uint8_t byte)
     {
         return true;
     }
-
+#if MODE == 64
     // REX
     if ((byte & 0xf0U) == 0x40)
     {
         return true;
     }
-
+#endif
     switch(byte & 0xfeU)
     {
     case 0x66: // Operand (0x66)/address (0x67) size override
@@ -301,6 +301,7 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
             vex_seen = true;
             break;
         default:
+#if MODE == 64
             if ((byte & 0xf0U) == 0x40U)
             {
                 if (rex_seen)
@@ -311,6 +312,7 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
                 break;
             }
             else
+#endif
             {
                 return false;
             }
