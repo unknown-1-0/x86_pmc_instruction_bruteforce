@@ -465,6 +465,13 @@ void handle_exception(struct context* context)
         }
 #endif
         printf(L"UOPS_ISSUED.ANY PMC UMask:EventCode = 0x%lx\r\n", UOPS_ISSUED_ANY);
+#if MODE == 64
+        print(L"Starting bruteforce in 64-bit userspace\r\n");
+#elif MODE == 32
+        print(L"Starting bruteforce in 32-bit userspace\r\n");
+#else
+#error Unknown CPU mode
+#endif
         execute_current_instruction();
     }
     bool is_interesting_instruction = false;
