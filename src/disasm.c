@@ -24,7 +24,7 @@ uint64_t disasm_get_instruction_length(const uint8_t* bytes, size_t size)
             );
     xed_decoded_inst_set_input_chip(&xedd, XED_CHIP_SKYLAKE);
 
-    if (xed_ild_decode(&xedd, bytes, size) != XED_ERROR_NONE)
+    if (xed_decode(&xedd, bytes, size) != XED_ERROR_NONE)
     {
         return 0;
     }
