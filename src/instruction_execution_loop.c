@@ -28,13 +28,19 @@ static inline void __attribute__((noreturn)) halt(void)
 #define PERFEVTSEL_OS (1ULL<<17)
 #define PERFEVTSEL_USER (1ULL<<16)
 
-#if TARGET == SKYLAKE
+#define SKYLAKE 1
+#define ALDER_LAKE 2
+
+#if TARGET==SKYLAKE
 #define UOPS_ISSUED_ANY 0x010e
-#elif TARGET == ALDER_LAKE
+#elif TARGET==ALDER_LAKE
 #define UOPS_ISSUED_ANY 0x01ae
 #else
 #error Unknown target CPU microarchitecture
 #endif
+
+#undef SKYLAKE
+#undef ALDER_LAKE
 
 #ifdef COUNT_NOPS
 #define INST_RETIRED_NOP 0x02c0
@@ -410,12 +416,8 @@ void handle_exception(struct context* context)
 #ifdef COUNT_NOPS
         measuring_nop_uops_issued = true;
         execute_nop();
-#else
-        execute_current_instruction();
-#endif
     }
 
-#ifdef COUNT_NOPS
     if (measuring_nop_uops_issued)
     {
         if (context->exception_number != EXCEPTION_DEBUG)
@@ -461,9 +463,10 @@ void handle_exception(struct context* context)
             print(L"Halting CPU\r\n");
             halt();
         }
+#endif
+        printf(L"UOPS_ISSUED.ANY PMC UMask:EventCode = 0x%lx\r\n", UOPS_ISSUED_ANY);
         execute_current_instruction();
     }
-#endif
     bool is_interesting_instruction = false;
 
     if (__builtin_expect((frame->cs & 3) == 3, 1))
