@@ -563,12 +563,12 @@ void handle_exception(struct context* context)
                 execute_current_instruction();
             }
 
+            extra_info = uops_issued_any;
             last_uops_issued_any = (uint64_t)-1;
 
             if (uops_issued_any != ud_uops_issued_any && !instruction_is_known)
             {
                 is_interesting_instruction = true;
-                extra_info = uops_issued_any;
                 hidden_behind_ud_instructions++;
             }
         }
