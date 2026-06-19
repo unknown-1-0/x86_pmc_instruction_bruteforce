@@ -499,7 +499,7 @@ void handle_exception(struct context* context)
 #ifdef COUNT_NOPS
     uint64_t nops_retired = rdmsr(MSR_IA32_PMC1);
 #endif
-    uint64_t extra_info = 0;
+    uint64_t extra_info = uops_issued_any;
 
     uint64_t disasm_length = disasm_get_instruction_length(instruction_bytes, cur_instruction_length);
     bool instruction_is_known = (disasm_length != 0);
@@ -544,10 +544,6 @@ void handle_exception(struct context* context)
                 last_uops_issued_any = (uint64_t)-1;
                 if (uops_issued_any != nop_uops_issued_any)
                 {
-                    if (!is_interesting_instruction)
-                    {
-                        extra_info = uops_issued_any;
-                    }
                     is_interesting_instruction = true;
                     nops_with_side_effects++;
                 }
@@ -563,7 +559,6 @@ void handle_exception(struct context* context)
                 execute_current_instruction();
             }
 
-            extra_info = uops_issued_any;
             last_uops_issued_any = (uint64_t)-1;
 
             if (uops_issued_any != ud_uops_issued_any && !instruction_is_known)
@@ -593,8 +588,6 @@ void handle_exception(struct context* context)
         wrmsr(MSR_IA32_MCG_STATUS, mcg_status & ~MCG_STATUS_MCIP);
         break;
     }
-
-
 
     if (is_interesting_instruction)
     {
