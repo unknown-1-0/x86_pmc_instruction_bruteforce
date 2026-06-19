@@ -136,7 +136,12 @@ static CHAR16* exception_names[] = {
     L"#VE", L"#CP"
 };
 
-void dump_stats(struct context* context, uint8_t* instruction_bytes, size_t instruction_length, uint64_t extra_info, uint64_t uops_issued_any, uint64_t xed_length)
+void dump_stats(struct context* context,
+                uint8_t* instruction_bytes,
+                size_t instruction_length,
+                uint64_t extra_info,
+                uint64_t uops_issued_any,
+                uint64_t xed_length)
 {
     printf(L"Unique instructions executed: 0x%lx, saved: 0x%lx\r\n", unique_instructions_executed, instructions_saved);
     printf(L"Current save file size: 0x%lx bytes\r\n", get_save_file_position());
@@ -400,7 +405,7 @@ void handle_exception(struct context* context)
         }
 
         measuring_ud_uops_issued = false;
-        printf(L"UD issued micro-ops count: 0x%lx\r\n", ud_uops_issued_any);
+        printf(L"UD2 issued micro-ops count: 0x%lx\r\n", ud_uops_issued_any);
 
         EFI_STATUS status = save_data(&ud_uops_issued_any, sizeof(ud_uops_issued_any));
 
@@ -608,11 +613,19 @@ void handle_exception(struct context* context)
 
     if (is_interesting_instruction)
     {
-        if (save_instruction_data(context, instruction_bytes, cur_instruction_length, extra_info) != EFI_SUCCESS)
+        if (save_instruction_data(context,
+                                  instruction_bytes,
+                                  cur_instruction_length,
+                                  extra_info) != EFI_SUCCESS)
         {
             print(L"Saving instruction info failed.\r\n");
 
-            dump_stats(context, instruction_bytes, cur_instruction_length, extra_info, uops_issued_any, disasm_length);
+            dump_stats(context,
+                       instruction_bytes,
+                       cur_instruction_length,
+                       extra_info,
+                       uops_issued_any,
+                       disasm_length);
 
             print(L"Closing save file\r\n");
             close_save_file();
@@ -626,7 +639,13 @@ void handle_exception(struct context* context)
     unique_instructions_executed++;
     if (unique_instructions_executed % 0x1000000 == 0)
     {
-        dump_stats(context, instruction_bytes, cur_instruction_length, extra_info, uops_issued_any, disasm_length);
+        dump_stats(context,
+                   instruction_bytes,
+                   cur_instruction_length,
+                   extra_info,
+                   uops_issued_any,
+                   disasm_length);
+
         if (flush_required)
         {
             print(L"Flushing save file\r\n");
