@@ -313,6 +313,14 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 
     wrmsr(MSR_IA32_EFER, rdmsr(MSR_IA32_EFER) | EFER_NXE);
 
+#if MODE == 64
+    print(L"Bruteforcing in 64-bit mode\r\n");
+#elif MODE == 32
+    print(L"Bruteforcing in 32-bit mode\r\n");
+#else
+#error Unknown CPU mode
+#endif
+
     execute_ud();
     __builtin_unreachable();
 }
