@@ -21,8 +21,16 @@ uint64_t disasm_get_instruction_length(const uint8_t* bytes, size_t size)
 #else
 #error Unknown CPU mode
 #endif
-            );
-    xed_decoded_inst_set_input_chip(&xedd, XED_CHIP_SKYLAKE);
+    );
+
+#ifndef TARGET
+#error Target CPU microarchitecture was not specified
+#endif
+
+#define CONCAT_HELPER(a, b) a##b
+#define CONCAT(a, b) CONCAT_HELPER(a, b)
+
+    xed_decoded_inst_set_input_chip(&xedd, CONCAT(XED_CHIP_, TARGET));
 
     if (xed_decode(&xedd, bytes, size) != XED_ERROR_NONE)
     {

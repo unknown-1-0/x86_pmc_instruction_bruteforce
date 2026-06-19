@@ -28,7 +28,14 @@ static inline void __attribute__((noreturn)) halt(void)
 #define PERFEVTSEL_OS (1ULL<<17)
 #define PERFEVTSEL_USER (1ULL<<16)
 
+#if TARGET == SKYLAKE
 #define UOPS_ISSUED_ANY 0x010e
+#elif TARGET == ALDER_LAKE
+#define UOPS_ISSUED_ANY 0x01ae
+#else
+#error Unknown target CPU microarchitecture
+#endif
+
 #ifdef COUNT_NOPS
 #define INST_RETIRED_NOP 0x02c0
 #endif
