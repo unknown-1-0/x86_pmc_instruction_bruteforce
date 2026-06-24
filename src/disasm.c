@@ -14,25 +14,25 @@ uint64_t disasm_get_instruction_length(const uint8_t* bytes, size_t size)
 {
     xed_decoded_inst_t xedd = {0};
     xed_decoded_inst_set_mode(&xedd,
-#if MODE == 64
+#if CPU_MODE == 64
             XED_MACHINE_MODE_LONG_64, XED_ADDRESS_WIDTH_64b
-#elif MODE == 32
+#elif CPU_MODE == 32
             XED_MACHINE_MODE_LONG_COMPAT_32, XED_ADDRESS_WIDTH_32b
-#elif MODE == 16
+#elif CPU_MODE == 16
             XED_MACHINE_MODE_LONG_COMPAT_16, XED_ADDRESS_WIDTH_32b
 #else
 #error Unknown CPU mode
 #endif
     );
 
-#ifndef TARGET
+#ifndef TARGET_UARCH
 #error Target CPU microarchitecture was not specified
 #endif
 
 #define CONCAT_HELPER(a, b) a##b
 #define CONCAT(a, b) CONCAT_HELPER(a, b)
 
-    xed_decoded_inst_set_input_chip(&xedd, CONCAT(XED_CHIP_, TARGET));
+    xed_decoded_inst_set_input_chip(&xedd, CONCAT(XED_CHIP_, TARGET_UARCH));
 
     if (xed_decode(&xedd, bytes, size) != XED_ERROR_NONE)
     {

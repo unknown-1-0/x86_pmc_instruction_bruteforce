@@ -31,9 +31,9 @@ static inline void __attribute__((noreturn)) halt(void)
 #define SKYLAKE 1
 #define ALDER_LAKE 2
 
-#if TARGET==SKYLAKE
+#if TARGET_UARCH == SKYLAKE
 #define UOPS_ISSUED_ANY 0x010e
-#elif TARGET==ALDER_LAKE
+#elif TARGET_UARCH == ALDER_LAKE
 #define UOPS_ISSUED_ANY 0x01ae
 #else
 #error Unknown target CPU microarchitecture
@@ -194,7 +194,7 @@ static bool is_prefix(uint8_t byte)
     {
         return true;
     }
-#if MODE == 64
+#if CPU_MODE == 64
     // REX
     if ((byte & 0xf0U) == 0x40)
     {
@@ -319,7 +319,7 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
             vex_seen = true;
             break;
         default:
-#if MODE == 64
+#if CPU_MODE == 64
             if ((byte & 0xf0U) == 0x40U)
             {
                 if (rex_seen)
@@ -470,11 +470,11 @@ void handle_exception(struct context* context)
         }
 #endif
         printf(L"UOPS_ISSUED.ANY PMC UMask:EventCode = 0x%lx\r\n", UOPS_ISSUED_ANY);
-#if MODE == 64
+#if CPU_MODE == 64
         print(L"Starting bruteforce in 64-bit userspace\r\n");
-#elif MODE == 32
+#elif CPU_MODE == 32
         print(L"Starting bruteforce in 32-bit userspace\r\n");
-#elif MODE == 16
+#elif CPU_MODE == 16
         print(L"Starting bruteforce in 16-bit userspace\r\n");
 #else
 #error Unknown CPU mode
