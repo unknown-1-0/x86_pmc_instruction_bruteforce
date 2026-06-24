@@ -20,21 +20,39 @@ static inline void __attribute__((noreturn)) halt(void)
 }
 
 #define MSR_IA32_PMC0 0xc1
-#define MSR_IA32_PMC1 0xc2
+#define MSR_IA32_PMC(i) (MSR_IA32_PMC0 + (i))
 
 #define MSR_IA32_PERFEVTSEL0 0x186
-#define MSR_IA32_PERFEVTSEL1 0x187
+#define MSR_IA32_PERFEVTSEL(i) (MSR_IA32_PERFEVTSEL0 + (i))
 #define PERFEVTSEL_ENABLE (1ULL<<22)
 #define PERFEVTSEL_OS (1ULL<<17)
 #define PERFEVTSEL_USER (1ULL<<16)
 
+enum perf_counters_ids
+{
+    UOPS_ISSUED_ANY = 0,
+    UOPS_RETIRED_ALL,
+    UOPS_RETIRED_SLOTS,
+#ifdef COUNT_NOPS
+    INST_RETIRED_NOP,
+#endif
+    PERF_EVENTS_COUNT
+};
+
 #define SKYLAKE 1
 #define ALDER_LAKE 2
 
+static const uint16_t perf_counters_event_masks[PERF_EVENTS_COUNT] = {
 #if TARGET_UARCH == SKYLAKE
-#define UOPS_ISSUED_ANY 0x010e
+    [UOPS_ISSUED_ANY] = 0x010e,
+    // From Haswell and Broadwell docs, seems to work fine on Skylake
+    [UOPS_RETIRED_ALL] = 0x01c2,
+    [UOPS_RETIRED_SLOTS] = 0x02c2,
 #elif TARGET_UARCH == ALDER_LAKE
-#define UOPS_ISSUED_ANY 0x01ae
+    [UOPS_ISSUED_ANY] = 0x01ae,
+    // Actually UOPS_RETIRED.HEAVY
+    [UOPS_RETIRED_ALL] = 0x01c2,
+    [UOPS_RETIRED_SLOTS] = 0x02c2,
 #else
 #error Unknown target CPU microarchitecture
 #endif
@@ -43,8 +61,9 @@ static inline void __attribute__((noreturn)) halt(void)
 #undef ALDER_LAKE
 
 #ifdef COUNT_NOPS
-#define INST_RETIRED_NOP 0x02c0
+    [INST_RETIRED_NOP] = 0x02c0,
 #endif
+};
 
 #define MSR_IA32_FIXED_CTR_CTRL 0x38d
 #define MSR_IA32_PERF_GLOBAL_CTRL 0x38f
@@ -58,23 +77,28 @@ void execute_instruction(const uint8_t* instruction, size_t size)
     }
 
     wrmsr(MSR_IA32_FIXED_CTR_CTRL, 0);
+
     wrmsr(MSR_IA32_PERF_GLOBAL_CTRL,
-            (1ULL<<0)
+            (1ULL<<UOPS_ISSUED_ANY)
+            | (1ULL<<UOPS_RETIRED_ALL)
+            | (1ULL<<UOPS_RETIRED_SLOTS)
 #ifdef COUNT_NOPS
-            |(1ULL<<1)
+            | (1ULL<<INST_RETIRED_NOP)
 #endif
          );
-    wrmsr(MSR_IA32_PERFEVTSEL0, 0);
-    wrmsr(MSR_IA32_PMC0, 0);
-    wrmsr(MSR_IA32_PERFEVTSEL0, PERFEVTSEL_USER | PERFEVTSEL_ENABLE | UOPS_ISSUED_ANY);
-#ifdef COUNT_NOPS
-    wrmsr(MSR_IA32_PERFEVTSEL1, 0);
-    wrmsr(MSR_IA32_PMC1, 0);
-    wrmsr(MSR_IA32_PERFEVTSEL1, PERFEVTSEL_USER | PERFEVTSEL_ENABLE | INST_RETIRED_NOP);
-#endif
 
-    __asm__("clflush [%0]"::"r"(user_code_page+0x1000-size));
-    enter_user(user_code_page + 0x1000 - size, NULL);
+    for (uint16_t i = 0; i < PERF_EVENTS_COUNT; i++)
+    {
+        wrmsr(MSR_IA32_PERFEVTSEL(i), 0);
+        wrmsr(MSR_IA32_PMC(i), 0);
+        wrmsr(MSR_IA32_PERFEVTSEL(i),
+                PERFEVTSEL_USER | PERFEVTSEL_ENABLE | perf_counters_event_masks[i]);
+    }
+
+    uint8_t* user_code_start = user_code_page + 0x1000 - size;
+
+    __asm__("clflush [%0]"::"r"(user_code_start));
+    enter_user(user_code_start, NULL);
 }
 
 uint8_t instruction_bytes[15] = {0x00};
@@ -379,8 +403,6 @@ void handle_exception(struct context* context)
     bool has_error_code = ((1ULL << context->exception_number) & EXCEPTIONS_WITH_ERROR_CODE_MASK) != 0;
     struct iretq_frame* frame = has_error_code ? &context->iretq_frame_with_error_code : &context->iretq_frame_no_error_code;
 
-    wrmsr(MSR_IA32_PERFEVTSEL0, 0);
-    wrmsr(MSR_IA32_PERFEVTSEL1, 0);
     if (measuring_ud_uops_issued)
     {
         if (context->exception_number != EXCEPTION_INVALID_OPCODE)
@@ -396,7 +418,7 @@ void handle_exception(struct context* context)
             halt();
         }
 
-        uint64_t current_ud_uops_issued_any = rdmsr(MSR_IA32_PMC0);
+        uint64_t current_ud_uops_issued_any = rdmsr(MSR_IA32_PMC(UOPS_ISSUED_ANY));
 
         if (ud_uops_issued_any != current_ud_uops_issued_any)
         {
@@ -438,7 +460,7 @@ void handle_exception(struct context* context)
             halt();
         }
 
-        uint64_t nops_retired = rdmsr(MSR_IA32_PMC1);
+        uint64_t nops_retired = rdmsr(MSR_IA32_PMC(INST_RETIRED_NOP));
 
         if (nops_retired != 1)
         {
@@ -446,7 +468,7 @@ void handle_exception(struct context* context)
             halt();
         }
 
-        uint64_t current_nop_uops_issued_any = rdmsr(MSR_IA32_PMC0);
+        uint64_t current_nop_uops_issued_any = rdmsr(MSR_IA32_PMC(UOPS_ISSUED_ANY));
 
 
         if (nop_uops_issued_any != current_nop_uops_issued_any)
@@ -469,7 +491,8 @@ void handle_exception(struct context* context)
             halt();
         }
 #endif
-        printf(L"UOPS_ISSUED.ANY PMC UMask:EventCode = 0x%lx\r\n", UOPS_ISSUED_ANY);
+        printf(L"UOPS_ISSUED.ANY PMC UMask:EventCode = 0x%lx\r\n",
+                perf_counters_event_masks[UOPS_ISSUED_ANY]);
 #if CPU_MODE == 64
         print(L"Starting bruteforce in 64-bit userspace\r\n");
 #elif CPU_MODE == 32
@@ -519,9 +542,9 @@ void handle_exception(struct context* context)
         malformed_but_valid_instructions++;
     }
 
-    uint64_t uops_issued_any = rdmsr(MSR_IA32_PMC0);
+    uint64_t uops_issued_any = rdmsr(MSR_IA32_PMC(UOPS_ISSUED_ANY));
 #ifdef COUNT_NOPS
-    uint64_t nops_retired = rdmsr(MSR_IA32_PMC1);
+    uint64_t nops_retired = rdmsr(MSR_IA32_PMC(INST_RETIRED_NOP));
 #endif
     uint64_t extra_info = uops_issued_any;
 
