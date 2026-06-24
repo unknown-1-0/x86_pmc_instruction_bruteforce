@@ -62,6 +62,8 @@ EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
             L"interesting_x86_instructions_64bit.bin",
 #elif MODE == 32
             L"interesting_x86_instructions_32bit.bin",
+#elif MODE == 16
+            L"interesting_x86_instructions_16bit.bin",
 #else
 #error Unknown CPU mode
 #endif

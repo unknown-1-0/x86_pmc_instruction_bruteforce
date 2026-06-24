@@ -474,6 +474,8 @@ void handle_exception(struct context* context)
         print(L"Starting bruteforce in 64-bit userspace\r\n");
 #elif MODE == 32
         print(L"Starting bruteforce in 32-bit userspace\r\n");
+#elif MODE == 16
+        print(L"Starting bruteforce in 16-bit userspace\r\n");
 #else
 #error Unknown CPU mode
 #endif

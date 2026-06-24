@@ -18,6 +18,8 @@ uint64_t disasm_get_instruction_length(const uint8_t* bytes, size_t size)
             XED_MACHINE_MODE_LONG_64, XED_ADDRESS_WIDTH_64b
 #elif MODE == 32
             XED_MACHINE_MODE_LONG_COMPAT_32, XED_ADDRESS_WIDTH_32b
+#elif MODE == 16
+            XED_MACHINE_MODE_LONG_COMPAT_16, XED_ADDRESS_WIDTH_32b
 #else
 #error Unknown CPU mode
 #endif
