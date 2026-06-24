@@ -25,6 +25,7 @@ extern uint8_t* user_code_page;
 uint8_t* xsave_state_area_allocated_ptr = NULL;
 uint8_t* xsave_state_area_ptr = NULL;
 
+void init_perf_counters(void);
 void execute_ud(void);
 EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable);
 #define KERNEL_STACK_PAGES 2
@@ -271,6 +272,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 
     wrmsr(MSR_IA32_EFER, rdmsr(MSR_IA32_EFER) | EFER_NXE);
 
+    init_perf_counters();
     execute_ud();
     __builtin_unreachable();
 }

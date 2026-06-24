@@ -84,6 +84,17 @@ static const CHAR16* perf_events_names[PERF_EVENTS_COUNT] = {
 
 #define MSR_IA32_FIXED_CTR_CTRL 0x38d
 #define MSR_IA32_PERF_GLOBAL_CTRL 0x38f
+void init_perf_counters(void)
+{
+    wrmsr(MSR_IA32_FIXED_CTR_CTRL, 0);
+    wrmsr(MSR_IA32_PERF_GLOBAL_CTRL, 0);
+    for (uint16_t i = 0; i < PERF_EVENTS_COUNT; i++)
+    {
+        wrmsr(MSR_IA32_PERFEVTSEL(i),
+                PERFEVTSEL_ENABLE | PERFEVTSEL_USER | perf_counters_event_masks[i]);
+    }
+}
+
 uint8_t* user_code_page = NULL;
 void __attribute__((noreturn)) enter_user(void* rip, void* rsp);
 void execute_instruction(const uint8_t* instruction, size_t size)
@@ -93,7 +104,12 @@ void execute_instruction(const uint8_t* instruction, size_t size)
         user_code_page[0x1000 - size + i] = instruction[i];
     }
 
-    wrmsr(MSR_IA32_FIXED_CTR_CTRL, 0);
+    wrmsr(MSR_IA32_PERF_GLOBAL_CTRL, 0);
+
+    for (uint16_t i = 0; i < PERF_EVENTS_COUNT; i++)
+    {
+        wrmsr(MSR_IA32_PMC(i), 0);
+    }
 
     wrmsr(MSR_IA32_PERF_GLOBAL_CTRL,
             (1ULL<<UOPS_ISSUED_ANY)
@@ -103,15 +119,6 @@ void execute_instruction(const uint8_t* instruction, size_t size)
             | (1ULL<<INST_RETIRED_NOP)
 #endif
          );
-
-    for (uint16_t i = 0; i < PERF_EVENTS_COUNT; i++)
-    {
-        wrmsr(MSR_IA32_PERFEVTSEL(i), 0);
-        wrmsr(MSR_IA32_PMC(i), 0);
-        wrmsr(MSR_IA32_PERFEVTSEL(i),
-                PERFEVTSEL_USER | PERFEVTSEL_ENABLE | perf_counters_event_masks[i]);
-    }
-
     uint8_t* user_code_start = user_code_page + 0x1000 - size;
 
     __asm__("clflush [%0]"::"r"(user_code_start));
