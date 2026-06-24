@@ -6,6 +6,7 @@
 #include "save_file.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 #include <xed-decode.h>
 #include <xed-decoded-inst-api.h>
 
@@ -57,13 +58,29 @@ static const uint16_t perf_counters_event_masks[PERF_EVENTS_COUNT] = {
 #error Unknown target CPU microarchitecture
 #endif
 
-#undef SKYLAKE
-#undef ALDER_LAKE
 
 #ifdef COUNT_NOPS
     [INST_RETIRED_NOP] = 0x02c0,
 #endif
 };
+
+static const CHAR16* perf_events_names[PERF_EVENTS_COUNT] = {
+    [UOPS_ISSUED_ANY] = L"UOPS_ISSUED.ANY",
+#if TARGET_UARCH == SKYLAKE
+    [UOPS_RETIRED_ALL] = L"UOPS_RETIRED.ALL",
+    [UOPS_RETIRED_SLOTS] = L"UOPS_RETIRED.RETIRE_SLOTS",
+#elif TARGET_UARCH == ALDER_LAKE
+    [UOPS_RETIRED_ALL] = L"UOPS_RETIRED.HEAVY",
+    [UOPS_RETIRED_SLOTS] = L"UOPS_RETIRED.SLOTS",
+#endif
+#ifdef COUNT_NOPS
+    [INST_RETIRED_NOP] = L"INST_RETIRED.NOP",
+#endif
+
+};
+
+#undef SKYLAKE
+#undef ALDER_LAKE
 
 #define MSR_IA32_FIXED_CTR_CTRL 0x38d
 #define MSR_IA32_PERF_GLOBAL_CTRL 0x38f
@@ -140,9 +157,9 @@ static size_t unique_instructions_executed = 0;
 static size_t instructions_saved = 0;
 static size_t kernel_exceptions = 0;
 static size_t kernel_page_faults = 0;
-static size_t hidden_behind_ud_instructions = 0;
-static size_t undocumented_instructions = 0;
-static size_t malformed_but_valid_instructions = 0;
+static size_t undocumented_behind_ud = 0;
+static size_t undocumented_not_ud = 0;
+static size_t vex_malformed_but_accepted = 0;
 #ifdef COUNT_NOPS
 static size_t nops_with_side_effects = 0;
 #endif
@@ -163,19 +180,27 @@ static CHAR16* exception_names[] = {
 void dump_stats(struct context* context,
                 uint8_t* instruction_bytes,
                 size_t instruction_length,
+                bool extra_info_present,
                 uint64_t extra_info,
-                uint64_t uops_issued_any,
+                uint32_t perf_counters_values[PERF_EVENTS_COUNT],
                 uint64_t xed_length)
 {
-    printf(L"Unique instructions executed: 0x%lx, saved: 0x%lx\r\n", unique_instructions_executed, instructions_saved);
+    printf(L"Unique instructions executed: 0x%lx, saved: 0x%lx\r\n",
+            unique_instructions_executed, instructions_saved);
+
     printf(L"Current save file size: 0x%lx bytes\r\n", get_save_file_position());
-    printf(L"Kernel: page faults: 0x%lx, exceptions: 0x%lx\r\n", kernel_page_faults, kernel_exceptions);
-    printf(L"Undocumented instructions: hidden behind #UD: 0x%lx, not hidden: 0x%lx\r\n", hidden_behind_ud_instructions, undocumented_instructions);
+    printf(L"Kernel: page faults: 0x%lx, exceptions: 0x%lx\r\n",
+            kernel_page_faults, kernel_exceptions);
+
+    printf(L"Undocumented instructions: hidden behind #UD: 0x%lx, not hidden: 0x%lx\r\n",
+            undocumented_behind_ud, undocumented_not_ud);
+
 #ifdef COUNT_NOPS
-    printf(L"Malformed but valid instructions: 0x%lx, NOPs with side effects: 0x%lx\r\n", malformed_but_valid_instructions, nops_with_side_effects);
+    printf(L"VEX malformed but accepted: 0x%lx, NOPs with side effects: 0x%lx\r\n", vex_malformed_but_accepted, nops_with_side_effects);
 #else
-    printf(L"Malformed but valid instructions: 0x%lx\r\n", malformed_but_valid_instructions);
+    printf(L"VEX malformed but accepted: 0x%lx\r\n", vex_malformed_but_accepted);
 #endif
+
 #ifdef COUNT_XED_VS_CPU_MISMATCHES
     printf(L"Machine checks: 0x%lx, Intel XED vs CPU decoder length mismatches: 0x%lx\r\n", machine_checks, cpu_xed_length_mismatches);
 #else
@@ -208,7 +233,21 @@ void dump_stats(struct context* context,
         printf(L" %hx", instruction_bytes[i]);
     }
 
-    printf(L" (extra info: 0x%lx, UOPS_ISSUED.ANY = 0x%lx, Intel XED length: 0x%lx)\r\n", extra_info, uops_issued_any, xed_length);
+    printf(L" (Intel XED length: 0x%lx", xed_length);
+    if (extra_info_present)
+    {
+        printf(L", extra info: 0x%lx", extra_info);
+    }
+
+    print(L")\r\n");
+
+    print(L"Performance counters values:\r\n");
+
+    for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+    {
+        printf(L"%s: 0x%x\r\n", perf_events_names[i], perf_counters_values[i]);
+    }
+
 }
 
 static bool is_prefix(uint8_t byte)
@@ -386,15 +425,56 @@ void execute_nop(void)
     execute_instruction(nop, sizeof(nop));
 }
 
-static bool measuring_nop_uops_issued = false;
-static uint64_t nop_uops_issued_any = (uint64_t)-1;
+static bool measuring_nop = false;
+static uint32_t nop_perf_counters_values[PERF_EVENTS_COUNT] = {0};
 #endif
 
-static bool measuring_ud_uops_issued = true;
-static uint64_t ud_uops_issued_any = (uint64_t)-1;
-static uint64_t last_uops_issued_any = (uint64_t)-1;
+static bool measuring_ud = true;
+static uint32_t ud_perf_counters_values[PERF_EVENTS_COUNT] = {0};
 
-bool flush_required = false;
+static uint32_t last_perf_counters_values[PERF_EVENTS_COUNT] = {0};
+
+static void restart_on_unstable_counters_values(
+        uint32_t cur_perf_counters_values[PERF_EVENTS_COUNT]
+        )
+{
+    bool restart_required = false;
+
+    for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+    {
+        restart_required = restart_required ||
+            (last_perf_counters_values[i] != cur_perf_counters_values[i]);
+
+        last_perf_counters_values[i] = cur_perf_counters_values[i];
+    }
+
+    if (restart_required)
+    {
+        execute_current_instruction();
+    }
+    else
+    {
+        memset(last_perf_counters_values, 0, sizeof(last_perf_counters_values));
+    }
+}
+
+static bool perf_counters_values_match(
+        const uint32_t cur_values[PERF_EVENTS_COUNT],
+        const uint32_t reference_values[PERF_EVENTS_COUNT]
+        )
+{
+    for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+    {
+        if (cur_values[i] != reference_values[i])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool flush_required = false;
+
 
 #define MSR_IA32_MCG_CAP 0x179
 #define MCG_CAP_REPORTING_BANKS_COUNT_MASK 0xfULL
@@ -403,11 +483,34 @@ void handle_exception(struct context* context)
     bool has_error_code = ((1ULL << context->exception_number) & EXCEPTIONS_WITH_ERROR_CODE_MASK) != 0;
     struct iretq_frame* frame = has_error_code ? &context->iretq_frame_with_error_code : &context->iretq_frame_no_error_code;
 
-    if (measuring_ud_uops_issued)
+    uint32_t cur_perf_counters_values[PERF_EVENTS_COUNT] = {0};
+    for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+    {
+        uint64_t value = rdmsr(MSR_IA32_PMC(i));
+        if (value & ~0xffFFffFFULL)
+        {
+            print(L"BUG: Performance counter value exceeds 32 bits!\r\n");
+            printf(L"%s: 0x%lx\r\n", perf_events_names[i], value);
+
+            print(L"Current instruction bytes:\r\n");
+            for (size_t j = 0; j < cur_instruction_length; j++)
+            {
+                printf(L"%hx ", instruction_bytes[j]);
+            }
+            print(L"\r\nClosing save file\r\n");
+            close_save_file();
+            print(L"Halting CPU.\r\n");
+            halt();
+        }
+
+        cur_perf_counters_values[i] = (uint32_t)value;
+    }
+
+    if (measuring_ud)
     {
         if (context->exception_number != EXCEPTION_INVALID_OPCODE)
         {
-            printf(L"Unexpected exception %lx while measuring micro-ops count of a known invalid opcode\r\n", context->exception_number);
+            printf(L"Unexpected exception %lx while measuring performance counters values for UD2\r\n", context->exception_number);
             if (has_error_code)
             {
                 printf(L"Error code: %lx\r\n", context->error_code);
@@ -418,22 +521,34 @@ void handle_exception(struct context* context)
             halt();
         }
 
-        uint64_t current_ud_uops_issued_any = rdmsr(MSR_IA32_PMC(UOPS_ISSUED_ANY));
+        bool restart_required = false;
 
-        if (ud_uops_issued_any != current_ud_uops_issued_any)
+        for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
         {
-            ud_uops_issued_any = current_ud_uops_issued_any;
+            restart_required = restart_required ||
+                (cur_perf_counters_values[i] != ud_perf_counters_values[i]);
+
+            ud_perf_counters_values[i] = cur_perf_counters_values[i];
+        }
+
+        if (restart_required)
+        {
             execute_ud();
         }
 
-        measuring_ud_uops_issued = false;
-        printf(L"UD2 issued micro-ops count: 0x%lx\r\n", ud_uops_issued_any);
+        measuring_ud = false;
+        print(L"UD2 performance counters values:\r\n");
+        for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+        {
+            printf(L"%s: 0x%lx\r\n",
+                    perf_events_names[i], ud_perf_counters_values[i]);
+        }
 
-        EFI_STATUS status = save_data(&ud_uops_issued_any, sizeof(ud_uops_issued_any));
+        EFI_STATUS status = save_data(ud_perf_counters_values, sizeof(ud_perf_counters_values));
 
         if (status != EFI_SUCCESS)
         {
-            printf(L"Could not save UD issued micro-ops count, status = 0x%lx\r\n", status);
+            printf(L"Could not save UD2 performance counters values, status = 0x%lx\r\n", status);
             print(L"Closing save file\r\n");
             close_save_file();
             print(L"Halting CPU\r\n");
@@ -441,15 +556,15 @@ void handle_exception(struct context* context)
         }
 
 #ifdef COUNT_NOPS
-        measuring_nop_uops_issued = true;
+        measuring_nop = true;
         execute_nop();
     }
 
-    if (measuring_nop_uops_issued)
+    if (measuring_nop)
     {
         if (context->exception_number != EXCEPTION_DEBUG)
         {
-            printf(L"Unexpected exception %lx while measuring micro-ops count of a known NOP\r\n", context->exception_number);
+            printf(L"Unexpected exception %lx while measuring performance counters values for NOP\r\n", context->exception_number);
             if (has_error_code)
             {
                 printf(L"Error code: %lx\r\n", context->error_code);
@@ -460,39 +575,56 @@ void handle_exception(struct context* context)
             halt();
         }
 
-        uint64_t nops_retired = rdmsr(MSR_IA32_PMC(INST_RETIRED_NOP));
-
-        if (nops_retired != 1)
+        if (cur_perf_counters_values[INST_RETIRED_NOP] != 1)
         {
-            printf(L"Unexpected count of NOPs retired: expected: 1, got: 0x%lx\r\n", nops_retired);
+            printf(L"Unexpected count of NOPs retired: expected: 1, got: 0x%lx\r\n",
+                    cur_perf_counters_values[INST_RETIRED_NOP]);
             halt();
         }
 
-        uint64_t current_nop_uops_issued_any = rdmsr(MSR_IA32_PMC(UOPS_ISSUED_ANY));
+        bool restart_required = false;
 
-
-        if (nop_uops_issued_any != current_nop_uops_issued_any)
+        for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
         {
-            nop_uops_issued_any = current_nop_uops_issued_any;
+            restart_required = restart_required ||
+                (cur_perf_counters_values[i] != nop_perf_counters_values[i]);
+
+            nop_perf_counters_values[i] = cur_perf_counters_values[i];
+        }
+
+        if (restart_required)
+        {
             execute_nop();
         }
 
-        measuring_nop_uops_issued = false;
-        printf(L"NOP issued micro-ops count: 0x%lx\r\n", nop_uops_issued_any);
+        measuring_nop = false;
+        print(L"NOP performance counters values:\r\n");
 
-        EFI_STATUS status = save_data(&nop_uops_issued_any, sizeof(nop_uops_issued_any));
+        for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+        {
+            printf(L"%s: 0x%lx\r\n",
+                    perf_events_names[i], nop_perf_counters_values[i]);
+        }
+
+        EFI_STATUS status = save_data(nop_perf_counters_values, sizeof(nop_perf_counters_values));
 
         if (status != EFI_SUCCESS)
         {
-            printf(L"Could not save NOP issued micro-ops count, status = 0x%lx\r\n", status);
+            printf(L"Could not save NOP performance counters values, status = 0x%lx\r\n", status);
             print(L"Closing save file\r\n");
             close_save_file();
             print(L"Halting CPU\r\n");
             halt();
         }
+
 #endif
-        printf(L"UOPS_ISSUED.ANY PMC UMask:EventCode = 0x%lx\r\n",
-                perf_counters_event_masks[UOPS_ISSUED_ANY]);
+
+        for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+        {
+            printf(L"%s PMC UMask:EventCode = 0x%lx\r\n",
+                    perf_events_names[i], perf_counters_event_masks[i]);
+        }
+
 #if CPU_MODE == 64
         print(L"Starting bruteforce in 64-bit userspace\r\n");
 #elif CPU_MODE == 32
@@ -504,7 +636,8 @@ void handle_exception(struct context* context)
 #endif
         execute_current_instruction();
     }
-    bool is_interesting_instruction = false;
+
+    enum instruction_type instruction_type = NOT_INTERESTING;
 
     if (__builtin_expect((frame->cs & 3) == 3, 1))
     {
@@ -521,7 +654,7 @@ void handle_exception(struct context* context)
     else
     {
         printf(L"Kernel Exception! CS:RIP=%lx:%lx SS:RSP=%lx:%lx RFLAGS=%lx\r\n", frame->cs, frame->rip, frame->ss, frame->rsp, frame->rflags);
-        is_interesting_instruction = true;
+        instruction_type = KERNEL_EXCEPTION;
 
         print(L"Instruction bytes:");
 
@@ -531,30 +664,23 @@ void handle_exception(struct context* context)
         }
 
         print(L"\r\n");
-
-        kernel_exceptions++;
     }
 
 
     if (__builtin_expect(malformed_instruction_expect_ud && context->exception_number != EXCEPTION_INVALID_OPCODE, 0))
     {
-        is_interesting_instruction = true;
-        malformed_but_valid_instructions++;
+        instruction_type = VEX_MALFORMED_BUT_ACCEPTED;
     }
 
-    uint64_t uops_issued_any = rdmsr(MSR_IA32_PMC(UOPS_ISSUED_ANY));
-#ifdef COUNT_NOPS
-    uint64_t nops_retired = rdmsr(MSR_IA32_PMC(INST_RETIRED_NOP));
-#endif
-    uint64_t extra_info = uops_issued_any;
+    bool extra_info_present = false;
+    uint64_t extra_info = 0;
 
     uint64_t disasm_length = disasm_get_instruction_length(instruction_bytes, cur_instruction_length);
     bool instruction_is_known = (disasm_length != 0);
 #ifdef COUNT_XED_VS_CPU_MISMATCHES
     if (instruction_is_known && cur_instruction_length != disasm_length)
     {
-        is_interesting_instruction = true;
-        cpu_xed_length_mismatches++;
+        instruction_type = XED_LENGTH_MISMATCH;
     }
 #endif
     switch (context->exception_number)
@@ -562,37 +688,32 @@ void handle_exception(struct context* context)
     case EXCEPTION_PAGE_FAULT:
         if (!(context->error_code & PF_USER))
         {
-            is_interesting_instruction = true;
             extra_info = read_cr2();
-            kernel_page_faults++;
+            extra_info_present = true;
+            instruction_type = KERNEL_PAGE_FAULT;
         }
         __attribute__((fallthrough));
     default:
         if (!instruction_is_known)
         {
-            is_interesting_instruction = true;
-            undocumented_instructions++;
+            instruction_type = UNDOCUMENTED_NOT_UD;
         }
 #ifdef COUNT_NOPS
-        if (nops_retired)
+        else if (cur_perf_counters_values[INST_RETIRED_NOP])
         {
             if (context->exception_number != EXCEPTION_DEBUG)
             {
-                is_interesting_instruction = true;
-                nops_with_side_effects++;
-            }
-            else if (last_uops_issued_any != uops_issued_any)
-            {
-                last_uops_issued_any = uops_issued_any;
-                execute_current_instruction();
+                instruction_type = NOP_WITH_SIDE_EFFECTS;
             }
             else
             {
-                last_uops_issued_any = (uint64_t)-1;
-                if (uops_issued_any != nop_uops_issued_any)
+                restart_on_unstable_counters_values(cur_perf_counters_values);
+
+                if (!perf_counters_values_match(
+                            cur_perf_counters_values,
+                            nop_perf_counters_values))
                 {
-                    is_interesting_instruction = true;
-                    nops_with_side_effects++;
+                    instruction_type = NOP_WITH_SIDE_EFFECTS;
                 }
             }
         }
@@ -600,24 +721,24 @@ void handle_exception(struct context* context)
         break;
     case EXCEPTION_INVALID_OPCODE:
         {
-            if (last_uops_issued_any != uops_issued_any)
-            {
-                last_uops_issued_any = uops_issued_any;
-                execute_current_instruction();
-            }
+            restart_on_unstable_counters_values(cur_perf_counters_values);
 
-            last_uops_issued_any = (uint64_t)-1;
-
-            if (uops_issued_any != ud_uops_issued_any && !instruction_is_known)
+            if (!instruction_is_known)
             {
-                is_interesting_instruction = true;
-                hidden_behind_ud_instructions++;
+                for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+                {
+                    if (cur_perf_counters_values[i] != ud_perf_counters_values[i])
+                    {
+                        instruction_type = UNDOCUMENTED_UD;
+                        break;
+                    }
+                }
             }
         }
         break;
     case EXCEPTION_MACHINE_CHECK:
-        is_interesting_instruction = true;
-        machine_checks++;
+        instruction_type = MACHINE_CHECK;
+        extra_info_present = true;
         print(L"!!! MACHINE CHECK !!!\r\n");
         uint64_t mcg_status = rdmsr(MSR_IA32_MCG_STATUS);
         printf(L"IA32_MCG_STATUS=%lx\r\n", mcg_status);
@@ -636,20 +757,56 @@ void handle_exception(struct context* context)
         break;
     }
 
-    if (is_interesting_instruction)
+    if (instruction_type != NOT_INTERESTING)
     {
+        switch (instruction_type)
+        {
+        case NOT_INTERESTING:
+            break;
+        case KERNEL_EXCEPTION:
+            kernel_exceptions++;
+            break;
+        case KERNEL_PAGE_FAULT:
+            kernel_page_faults++;
+            break;
+        case MACHINE_CHECK:
+            machine_checks++;
+            break;
+        case UNDOCUMENTED_UD:
+            undocumented_behind_ud++;
+            break;
+        case UNDOCUMENTED_NOT_UD:
+            undocumented_not_ud++;
+            break;
+        case VEX_MALFORMED_BUT_ACCEPTED:
+            vex_malformed_but_accepted++;
+            break;
+        case NOP_WITH_SIDE_EFFECTS:
+            nops_with_side_effects++;
+            break;
+        case XED_LENGTH_MISMATCH:
+            cpu_xed_length_mismatches++;
+            break;
+
+        }
+
         if (save_instruction_data(context,
+                                  instruction_type,
                                   instruction_bytes,
                                   cur_instruction_length,
-                                  extra_info) != EFI_SUCCESS)
+                                  extra_info_present,
+                                  extra_info,
+                                  cur_perf_counters_values,
+                                  PERF_EVENTS_COUNT) != EFI_SUCCESS)
         {
             print(L"Saving instruction info failed.\r\n");
 
             dump_stats(context,
                        instruction_bytes,
                        cur_instruction_length,
+                       extra_info_present,
                        extra_info,
-                       uops_issued_any,
+                       cur_perf_counters_values,
                        disasm_length);
 
             print(L"Closing save file\r\n");
@@ -659,6 +816,8 @@ void handle_exception(struct context* context)
         }
         flush_required = true;
         instructions_saved++;
+
+
     }
 
     unique_instructions_executed++;
@@ -667,8 +826,9 @@ void handle_exception(struct context* context)
         dump_stats(context,
                    instruction_bytes,
                    cur_instruction_length,
+                   extra_info_present,
                    extra_info,
-                   uops_issued_any,
+                   cur_perf_counters_values,
                    disasm_length);
 
         if (flush_required)

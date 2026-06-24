@@ -2,6 +2,7 @@
 #include "exception_context.h"
 #include "print.h"
 #include "save_file.h"
+#include <stdbool.h>
 
 EFI_FILE_PROTOCOL* output_file = NULL;
 EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
@@ -130,17 +131,27 @@ EFI_STATUS save_data(void* data, size_t size)
     return output_file->Write(output_file, &size, data);
 }
 
-EFI_STATUS save_instruction_data(struct context* context, uint8_t* instruction_bytes, size_t length, uint64_t extra_data)
+
+#define EXTRA_DATA_PRESENT_FLAG 0x80u
+EFI_STATUS save_instruction_data(struct context* context,
+                                 enum instruction_type instruction_type,
+                                 uint8_t* instruction_bytes, size_t length,
+                                 bool extra_data_present, uint64_t extra_data,
+                                 uint32_t* perf_counters_values,
+                                 size_t perf_counters_count)
 {
 #ifdef NO_SAVE
     return EFI_SUCCESS;
 #endif
     // Exception number does not exceed 0x20, so this is safe to do to save space
     uint8_t exception_number = (uint8_t)context->exception_number;
-    UINTN write_size = sizeof(exception_number); 
 
-    EFI_STATUS status = output_file->Write(output_file, &write_size, &exception_number);
+    if (extra_data_present)
+    {
+        exception_number |= EXTRA_DATA_PRESENT_FLAG;
+    }
 
+    EFI_STATUS status = save_data(&exception_number, sizeof(exception_number));
     if (status != EFI_SUCCESS)
     {
         printf(L"Could not write exception number, status = 0x%lx\r\n", (uint64_t)status);
@@ -149,8 +160,7 @@ EFI_STATUS save_instruction_data(struct context* context, uint8_t* instruction_b
 
     if (exception_number & EXCEPTIONS_WITH_ERROR_CODE_MASK)
     {
-        write_size = sizeof(context->error_code);
-        status = output_file->Write(output_file, &write_size, &context->error_code);
+        status = save_data(&context->error_code, sizeof(context->error_code));
 
         if (status != EFI_SUCCESS)
         {
@@ -159,31 +169,41 @@ EFI_STATUS save_instruction_data(struct context* context, uint8_t* instruction_b
         }
     }
 
-    write_size = sizeof(extra_data);
-    status = output_file->Write(output_file, &write_size, &extra_data);
+    if (extra_data_present)
+    {
+        status = save_data(&extra_data, sizeof(extra_data));
+
+        if (status != EFI_SUCCESS)
+        {
+            printf(L"Could not write extra info, status = 0x%lx\r\n", (uint64_t)status);
+            return status;
+        }
+    }
+
+    status = save_data(perf_counters_values,
+                       perf_counters_count * sizeof(perf_counters_values[0]));
 
     if (status != EFI_SUCCESS)
     {
-        printf(L"Could not write extra info, status = 0x%lx\r\n", (uint64_t)status);
+        printf(L"Could not save performance counters values, status = 0x%lx\r\n", (uint64_t)status);
         return status;
     }
-
     // Instructions are at most sizeof(instruction_bytes) in length, which is way less than 0x100,
     // so this is safe to do to save space
     uint8_t instruction_length = (uint8_t)length;
 
-    write_size = sizeof(instruction_length);
-    status = output_file->Write(output_file, &write_size, &instruction_length);
+    // Max instruction length is 15 bytes
+    // Rest of bits are unused anyway
+    instruction_length |= instruction_type << 4;
 
+    status = save_data(&instruction_length, sizeof(instruction_length));
     if (status != EFI_SUCCESS)
     {
         printf(L"Could not write instruction length, status = 0x%lx\r\n", (uint64_t)status);
         return status;
     }
 
-    write_size = length;
-    status = output_file->Write(output_file, &write_size, instruction_bytes);
-
+    status = save_data(instruction_bytes, length);
     if (status != EFI_SUCCESS)
     {
         printf(L"Could not write instruction bytes, status = 0x%lx\r\n", (uint64_t)status);
