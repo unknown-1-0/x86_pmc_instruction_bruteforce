@@ -12,7 +12,8 @@ void disasm_init(void)
 
 uint64_t disasm_get_instruction_length(const uint8_t* bytes, size_t size)
 {
-    xed_decoded_inst_t xedd = {0};
+    xed_decoded_inst_t xedd;
+    xed_decoded_inst_zero(&xedd);
     xed_decoded_inst_set_mode(&xedd,
 #if CPU_MODE == 64
             XED_MACHINE_MODE_LONG_64, XED_ADDRESS_WIDTH_64b
