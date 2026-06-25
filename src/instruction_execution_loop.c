@@ -502,7 +502,7 @@ static bool perf_counters_values_match(
 {
     for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
     {
-        if (cur_values[i] != reference_values[i])
+        if (__builtin_expect(cur_values[i] != reference_values[i], 0))
         {
             return false;
         }
@@ -512,6 +512,13 @@ static bool perf_counters_values_match(
 
 static bool flush_required = false;
 
+static inline uint64_t __attribute__((always_inline)) rdpmc(uint32_t index)
+{
+    uint32_t low = 0, high = 0;
+    __asm__ ("rdpmc":"=a"(low),"=d"(high):"c"(index));
+    uint64_t value = low | (uint64_t)high << 32;
+    return value;
+}
 
 #define MSR_IA32_MCG_CAP 0x179
 #define MCG_CAP_REPORTING_BANKS_COUNT_MASK 0xfULL
@@ -523,8 +530,8 @@ void handle_exception(struct context* context)
     uint32_t cur_perf_counters_values[PERF_EVENTS_COUNT] = {0};
     for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
     {
-        uint64_t value = rdmsr(MSR_IA32_PMC(i));
-        if (value & ~0xffFFffFFULL)
+        uint64_t value = rdpmc(i);
+        if (__builtin_expect(value & ~0xffFFffFFULL, 0))
         {
             print(L"BUG: Performance counter value exceeds 32 bits!\r\n");
             printf(L"%s: 0x%lx\r\n", perf_events_names[i], value);
@@ -723,7 +730,7 @@ void handle_exception(struct context* context)
     switch (context->exception_number)
     {
     case EXCEPTION_PAGE_FAULT:
-        if (!(context->error_code & PF_USER))
+        if (__builtin_expect(!(context->error_code & PF_USER), 0))
         {
             extra_info = read_cr2();
             extra_info_present = true;
@@ -764,7 +771,7 @@ void handle_exception(struct context* context)
             {
                 for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
                 {
-                    if (cur_perf_counters_values[i] != ud_perf_counters_values[i])
+                    if (__builtin_expect(cur_perf_counters_values[i] != ud_perf_counters_values[i], 0))
                     {
                         instruction_type = UNDOCUMENTED_UD;
                         break;
@@ -853,8 +860,6 @@ void handle_exception(struct context* context)
         }
         flush_required = true;
         instructions_saved++;
-
-
     }
 
     unique_instructions_executed++;
