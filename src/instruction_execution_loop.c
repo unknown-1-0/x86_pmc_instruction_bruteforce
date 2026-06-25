@@ -82,6 +82,25 @@ static const CHAR16* perf_events_names[PERF_EVENTS_COUNT] = {
 #undef SKYLAKE
 #undef ALDER_LAKE
 
+void dump_bruteforce_config(void)
+{
+    for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+    {
+        printf(L"%s PMC UMask:EventCode = 0x%lx\r\n",
+            perf_events_names[i], perf_counters_event_masks[i]);
+    }
+
+#if CPU_MODE == 64
+    print(L"Bruteforce in 64-bit userspace\r\n");
+#elif CPU_MODE == 32
+    print(L"Bruteforce in 32-bit userspace\r\n");
+#elif CPU_MODE == 16
+    print(L"Bruteforce in 16-bit userspace\r\n");
+#else
+#error Unknown CPU mode
+#endif
+}
+
 #define MSR_IA32_FIXED_CTR_CTRL 0x38d
 #define MSR_IA32_PERF_GLOBAL_CTRL 0x38f
 void init_perf_counters(void)
@@ -455,6 +474,66 @@ void execute_ud(void)
     uint8_t ud2[] = { 0x0f, 0x0b };
     execute_instruction(ud2, sizeof(ud2));
 }
+
+static bool measuring_ud = true;
+static uint32_t ud_perf_counters_values[PERF_EVENTS_COUNT] = {0};
+
+void check_ud2_measurements(struct context* context, uint32_t cur_perf_counters_values[PERF_EVENTS_COUNT])
+{
+    if (context->exception_number != EXCEPTION_INVALID_OPCODE)
+    {
+        printf(L"Unexpected exception %lx while measuring performance counters values for UD2\r\n", context->exception_number);
+
+        bool has_error_code = ((1ULL << context->exception_number) & EXCEPTIONS_WITH_ERROR_CODE_MASK) != 0;
+        struct iretq_frame* frame = has_error_code ? &context->iretq_frame_with_error_code : &context->iretq_frame_no_error_code;
+
+        if (has_error_code)
+        {
+            printf(L"Error code: %lx\r\n", context->error_code);
+        }
+
+        printf(L"CS:RIP = %lx:%lx RFLAGS=%lx\r\n", frame->cs, frame->rip, frame->rflags);
+        printf(L"SS:RSP = %lx:%lx\r\n", frame->ss, frame->rsp);
+        halt();
+    }
+
+    bool restart_required = false;
+
+    for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+    {
+        restart_required = restart_required ||
+        (cur_perf_counters_values[i] != ud_perf_counters_values[i]);
+
+        ud_perf_counters_values[i] = cur_perf_counters_values[i];
+    }
+
+    if (restart_required)
+    {
+        execute_ud();
+    }
+
+    measuring_ud = false;
+    print(L"UD2 performance counters values:\r\n");
+    for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+    {
+        printf(L"%s: 0x%lx\r\n",
+            perf_events_names[i], ud_perf_counters_values[i]);
+    }
+
+    EFI_STATUS status = save_data(ud_perf_counters_values, sizeof(ud_perf_counters_values));
+
+    print(L"\r\n");
+
+    if (status != EFI_SUCCESS)
+    {
+        printf(L"Could not save UD2 performance counters values, status = 0x%lx\r\n", status);
+        print(L"Closing save file\r\n");
+        close_save_file();
+        print(L"Halting CPU\r\n");
+        halt();
+    }
+}
+
 #ifdef COUNT_NOPS
 void execute_nop(void)
 {
@@ -464,16 +543,75 @@ void execute_nop(void)
 
 static bool measuring_nop = false;
 static uint32_t nop_perf_counters_values[PERF_EVENTS_COUNT] = {0};
-#endif
 
-static bool measuring_ud = true;
-static uint32_t ud_perf_counters_values[PERF_EVENTS_COUNT] = {0};
+void check_nop_measurements(struct context* context, uint32_t cur_perf_counters_values[PERF_EVENTS_COUNT])
+{
+    if (context->exception_number != EXCEPTION_DEBUG)
+    {
+        printf(L"Unexpected exception %lx while measuring performance counters values for NOP\r\n", context->exception_number);
+
+        bool has_error_code = ((1ULL << context->exception_number) & EXCEPTIONS_WITH_ERROR_CODE_MASK) != 0;
+        struct iretq_frame* frame = has_error_code ? &context->iretq_frame_with_error_code : &context->iretq_frame_no_error_code;
+
+        if (has_error_code)
+        {
+            printf(L"Error code: %lx\r\n", context->error_code);
+        }
+
+        printf(L"CS:RIP = %lx:%lx RFLAGS=%lx\r\n", frame->cs, frame->rip, frame->rflags);
+        printf(L"SS:RSP = %lx:%lx\r\n", frame->ss, frame->rsp);
+        halt();
+    }
+
+    if (cur_perf_counters_values[INST_RETIRED_NOP] != 1)
+    {
+        printf(L"Unexpected count of NOPs retired: expected: 1, got: 0x%lx\r\n",
+            cur_perf_counters_values[INST_RETIRED_NOP]);
+        halt();
+    }
+
+    bool restart_required = false;
+
+    for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+    {
+        restart_required = restart_required ||
+        (cur_perf_counters_values[i] != nop_perf_counters_values[i]);
+
+        nop_perf_counters_values[i] = cur_perf_counters_values[i];
+    }
+
+    if (restart_required)
+    {
+        execute_nop();
+    }
+
+    measuring_nop = false;
+    print(L"NOP performance counters values:\r\n");
+
+    for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+    {
+        printf(L"%s: 0x%lx\r\n",
+            perf_events_names[i], nop_perf_counters_values[i]);
+    }
+
+    EFI_STATUS status = save_data(nop_perf_counters_values, sizeof(nop_perf_counters_values));
+
+    print(L"\r\n");
+
+    if (status != EFI_SUCCESS)
+    {
+        printf(L"Could not save NOP performance counters values, status = 0x%lx\r\n", status);
+        print(L"Closing save file\r\n");
+        close_save_file();
+        print(L"Halting CPU\r\n");
+        halt();
+    }
+}
+#endif
 
 static uint32_t last_perf_counters_values[PERF_EVENTS_COUNT] = {0};
 
-static void restart_on_unstable_counters_values(
-        uint32_t cur_perf_counters_values[PERF_EVENTS_COUNT]
-        )
+static void restart_on_unstable_counters_values(uint32_t cur_perf_counters_values[PERF_EVENTS_COUNT])
 {
     bool restart_required = false;
 
@@ -512,174 +650,12 @@ static bool perf_counters_values_match(
 
 static bool flush_required = false;
 
-static inline uint64_t __attribute__((always_inline)) rdpmc(uint32_t index)
-{
-    uint32_t low = 0, high = 0;
-    __asm__ ("rdpmc":"=a"(low),"=d"(high):"c"(index));
-    uint64_t value = low | (uint64_t)high << 32;
-    return value;
-}
-
 #define MSR_IA32_MCG_CAP 0x179
 #define MCG_CAP_REPORTING_BANKS_COUNT_MASK 0xfULL
-void handle_exception(struct context* context)
+void check_last_instruction(struct context* context, uint32_t cur_perf_counters_values[PERF_EVENTS_COUNT])
 {
     bool has_error_code = ((1ULL << context->exception_number) & EXCEPTIONS_WITH_ERROR_CODE_MASK) != 0;
     struct iretq_frame* frame = has_error_code ? &context->iretq_frame_with_error_code : &context->iretq_frame_no_error_code;
-
-    uint32_t cur_perf_counters_values[PERF_EVENTS_COUNT] = {0};
-    for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
-    {
-        uint64_t value = rdpmc(i);
-        if (__builtin_expect(value & ~0xffFFffFFULL, 0))
-        {
-            print(L"BUG: Performance counter value exceeds 32 bits!\r\n");
-            printf(L"%s: 0x%lx\r\n", perf_events_names[i], value);
-
-            print(L"Current instruction bytes:\r\n");
-            for (size_t j = 0; j < cur_instruction_length; j++)
-            {
-                printf(L"%hx ", instruction_bytes[j]);
-            }
-            print(L"\r\nClosing save file\r\n");
-            close_save_file();
-            print(L"Halting CPU.\r\n");
-            halt();
-        }
-
-        cur_perf_counters_values[i] = (uint32_t)value;
-    }
-
-    if (measuring_ud)
-    {
-        if (context->exception_number != EXCEPTION_INVALID_OPCODE)
-        {
-            printf(L"Unexpected exception %lx while measuring performance counters values for UD2\r\n", context->exception_number);
-            if (has_error_code)
-            {
-                printf(L"Error code: %lx\r\n", context->error_code);
-            }
-
-            printf(L"CS:RIP = %lx:%lx RFLAGS=%lx\r\n", frame->cs, frame->rip, frame->rflags);
-            printf(L"SS:RSP = %lx:%lx\r\n", frame->ss, frame->rsp);
-            halt();
-        }
-
-        bool restart_required = false;
-
-        for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
-        {
-            restart_required = restart_required ||
-                (cur_perf_counters_values[i] != ud_perf_counters_values[i]);
-
-            ud_perf_counters_values[i] = cur_perf_counters_values[i];
-        }
-
-        if (restart_required)
-        {
-            execute_ud();
-        }
-
-        measuring_ud = false;
-        print(L"UD2 performance counters values:\r\n");
-        for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
-        {
-            printf(L"%s: 0x%lx\r\n",
-                    perf_events_names[i], ud_perf_counters_values[i]);
-        }
-
-        EFI_STATUS status = save_data(ud_perf_counters_values, sizeof(ud_perf_counters_values));
-
-        if (status != EFI_SUCCESS)
-        {
-            printf(L"Could not save UD2 performance counters values, status = 0x%lx\r\n", status);
-            print(L"Closing save file\r\n");
-            close_save_file();
-            print(L"Halting CPU\r\n");
-            halt();
-        }
-
-#ifdef COUNT_NOPS
-        measuring_nop = true;
-        execute_nop();
-    }
-
-    if (measuring_nop)
-    {
-        if (context->exception_number != EXCEPTION_DEBUG)
-        {
-            printf(L"Unexpected exception %lx while measuring performance counters values for NOP\r\n", context->exception_number);
-            if (has_error_code)
-            {
-                printf(L"Error code: %lx\r\n", context->error_code);
-            }
-
-            printf(L"CS:RIP = %lx:%lx RFLAGS=%lx\r\n", frame->cs, frame->rip, frame->rflags);
-            printf(L"SS:RSP = %lx:%lx\r\n", frame->ss, frame->rsp);
-            halt();
-        }
-
-        if (cur_perf_counters_values[INST_RETIRED_NOP] != 1)
-        {
-            printf(L"Unexpected count of NOPs retired: expected: 1, got: 0x%lx\r\n",
-                    cur_perf_counters_values[INST_RETIRED_NOP]);
-            halt();
-        }
-
-        bool restart_required = false;
-
-        for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
-        {
-            restart_required = restart_required ||
-                (cur_perf_counters_values[i] != nop_perf_counters_values[i]);
-
-            nop_perf_counters_values[i] = cur_perf_counters_values[i];
-        }
-
-        if (restart_required)
-        {
-            execute_nop();
-        }
-
-        measuring_nop = false;
-        print(L"NOP performance counters values:\r\n");
-
-        for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
-        {
-            printf(L"%s: 0x%lx\r\n",
-                    perf_events_names[i], nop_perf_counters_values[i]);
-        }
-
-        EFI_STATUS status = save_data(nop_perf_counters_values, sizeof(nop_perf_counters_values));
-
-        if (status != EFI_SUCCESS)
-        {
-            printf(L"Could not save NOP performance counters values, status = 0x%lx\r\n", status);
-            print(L"Closing save file\r\n");
-            close_save_file();
-            print(L"Halting CPU\r\n");
-            halt();
-        }
-
-#endif
-
-        for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
-        {
-            printf(L"%s PMC UMask:EventCode = 0x%lx\r\n",
-                    perf_events_names[i], perf_counters_event_masks[i]);
-        }
-
-#if CPU_MODE == 64
-        print(L"Starting bruteforce in 64-bit userspace\r\n");
-#elif CPU_MODE == 32
-        print(L"Starting bruteforce in 32-bit userspace\r\n");
-#elif CPU_MODE == 16
-        print(L"Starting bruteforce in 16-bit userspace\r\n");
-#else
-#error Unknown CPU mode
-#endif
-        execute_current_instruction();
-    }
 
     enum instruction_type instruction_type = NOT_INTERESTING;
 
@@ -767,16 +743,9 @@ void handle_exception(struct context* context)
         {
             restart_on_unstable_counters_values(cur_perf_counters_values);
 
-            if (!instruction_is_known)
+            if (!instruction_is_known && !perf_counters_values_match(cur_perf_counters_values, ud_perf_counters_values))
             {
-                for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
-                {
-                    if (__builtin_expect(cur_perf_counters_values[i] != ud_perf_counters_values[i], 0))
-                    {
-                        instruction_type = UNDOCUMENTED_UD;
-                        break;
-                    }
-                }
+                instruction_type = UNDOCUMENTED_UD;
             }
         }
         break;
@@ -915,6 +884,58 @@ update_byte_index:
         }
         instruction_bytes[cur_byte_index]++;
     } while(contains_invalid_count_of_prefixes(instruction_bytes, cur_instruction_length));
+}
+
+static inline uint64_t __attribute__((always_inline)) rdpmc(uint32_t index)
+{
+    uint32_t low = 0, high = 0;
+    __asm__ ("rdpmc":"=a"(low),"=d"(high):"c"(index));
+    uint64_t value = low | (uint64_t)high << 32;
+    return value;
+}
+
+void handle_exception(struct context* context)
+{
+    uint32_t cur_perf_counters_values[PERF_EVENTS_COUNT] = {0};
+    for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+    {
+        uint64_t value = rdpmc(i);
+        if (__builtin_expect(value & ~0xffFFffFFULL, 0))
+        {
+            print(L"BUG: Performance counter value exceeds 32 bits!\r\n");
+            printf(L"%s: 0x%lx\r\n", perf_events_names[i], value);
+
+            print(L"Current instruction bytes:\r\n");
+            for (size_t j = 0; j < cur_instruction_length; j++)
+            {
+                printf(L"%hx ", instruction_bytes[j]);
+            }
+            print(L"\r\nClosing save file\r\n");
+            close_save_file();
+            print(L"Halting CPU.\r\n");
+            halt();
+        }
+
+        cur_perf_counters_values[i] = (uint32_t)value;
+    }
+
+    if (__builtin_expect(measuring_ud, 0))
+    {
+        check_ud2_measurements(context, cur_perf_counters_values);
+
+#ifdef COUNT_NOPS
+        measuring_nop = true;
+        execute_nop();
+    }
+    else if (__builtin_expect(measuring_nop, 0))
+    {
+        check_nop_measurements(context, cur_perf_counters_values);
+#endif
+    }
+    else
+    {
+        check_last_instruction(context, cur_perf_counters_values);
+    }
 
     execute_current_instruction();
 }
