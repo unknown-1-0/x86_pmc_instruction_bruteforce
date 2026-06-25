@@ -257,7 +257,7 @@ void dump_stats(struct context* context,
 
 }
 
-static bool is_prefix(uint8_t byte)
+static bool is_prefix(uint8_t byte, uint8_t next_byte)
 {
     // Segment override prefixes
     if ((byte & ~(0x26U ^ 0x3eU)) == 0x26U)
@@ -271,6 +271,17 @@ static bool is_prefix(uint8_t byte)
         return true;
     }
 #endif
+    // EVEX
+    if (byte == 0x62)
+    {
+#if CPU_MODE == 64
+        (void)next_byte;
+        return true;
+#else
+        return next_byte >= 0xc0;
+#endif
+    }
+
     switch(byte & 0xfeU)
     {
     case 0x66: // Operand (0x66)/address (0x67) size override
@@ -288,8 +299,10 @@ static size_t count_prefixes(const uint8_t* bytes, size_t length)
     size_t prefixes = 0;
     while (prefixes < length)
     {
-	uint8_t byte = bytes[prefixes];
-        if (is_prefix(byte))
+        uint8_t byte = bytes[prefixes];
+        uint8_t next_byte = (prefixes < length + 1) ? bytes[prefixes + 1] : 0;
+
+        if (is_prefix(byte, next_byte))
         {
             prefixes++;
 
@@ -319,6 +332,7 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
     bool repne_seen = false;
     bool rep_seen = false;
     bool rex_seen = false;
+    bool evex_seen = false;
     bool vex_seen = false;
     bool vex_invalid = false;
     bool vex_malformed_instruction_expect_ud = false;
@@ -340,6 +354,16 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
                 return true;
             }
             segment_override_seen = true;
+            break;
+        case 0x62:
+#if CPU_MODE != 64
+            if (i + 1 == length || bytes[i+1] < 0xc0)
+            {
+                // May be BOUND instruction
+                return false;
+            }
+#endif
+            evex_seen = true;
             break;
         case 0x66:
             if (rex_seen || operand_size_override_seen)
@@ -383,7 +407,7 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
 
             // Intel SDM says that instructions with 0x66, 0xf2, 0xf3, LOCK and REX prefixes preceding VEX will #UD.
             // However, VEX prefix can only encode 0x66, 0xf2, 0xf3 prefixes (+ REX, in 3-byte form)
-            // For this reason, keep LOCK prefix (and REX, if using 2-byte form of VEX) just in case some instruction hide there
+            // For this reason, keep LOCK prefix (and REX, if using 2-byte form of VEX) just in case some instructions hide there
             vex_invalid = (byte == 0xc4 && rex_seen) || operand_size_override_seen || rep_seen || repne_seen;
             vex_malformed_instruction_expect_ud = (!vex_invalid && ((byte == 0xc5 && rex_seen) || lock_seen));
             vex_seen = true;
@@ -411,11 +435,17 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
             return true;
         }
 
+        if (evex_seen)
+        {
+            break;
+        }
+
         if (vex_seen)
         {
             malformed_instruction_expect_ud = vex_malformed_instruction_expect_ud;
             return vex_invalid;
         }
+
     }
     return false;
 }
@@ -850,6 +880,7 @@ void handle_exception(struct context* context)
     bool cur_byte_is_prefix = cur_byte_index < count_prefixes(instruction_bytes, cur_instruction_length);
     if (cur_instruction_length == last_instruction_length && !cur_byte_is_prefix)
     {
+update_byte_index:
         while (instruction_bytes[cur_byte_index] == 0xff)
         {
             instruction_bytes[cur_byte_index] = 0;
@@ -875,20 +906,7 @@ void handle_exception(struct context* context)
     {
         if (__builtin_expect(instruction_bytes[cur_byte_index] == 0xff, 0))
         {
-            print(L"BUG: Softlock detected!\r\n");
-            printf(L"Current: instruction length: 0x%lx, byte index: 0x%lx\r\n", cur_instruction_length, cur_byte_index);
-            printf(L"Last instruction length: 0x%lx\r\n", last_instruction_length);
-            print(L"Instruction bytes:");
-
-            for (size_t i = 0; i < cur_instruction_length; i++)
-            {
-                printf(L" %hx", instruction_bytes[i]);
-            }
-
-            print(L"\r\nClosing save file\r\n");
-            close_save_file();
-            print(L"Halting CPU\r\n");
-            halt();
+            goto update_byte_index;
         }
         instruction_bytes[cur_byte_index]++;
     } while(contains_invalid_count_of_prefixes(instruction_bytes, cur_instruction_length));
