@@ -118,10 +118,7 @@ uint8_t* user_code_page = NULL;
 void __attribute__((noreturn)) enter_user(void* rip, void* rsp);
 void execute_instruction(const uint8_t* instruction, size_t size)
 {
-    for (size_t i = 0; i < size; i++)
-    {
-        user_code_page[0x1000 - size + i] = instruction[i];
-    }
+
 
     wrmsr(MSR_IA32_PERF_GLOBAL_CTRL, 0);
 
@@ -138,9 +135,9 @@ void execute_instruction(const uint8_t* instruction, size_t size)
             | (1ULL<<INST_RETIRED_NOP)
 #endif
          );
-    uint8_t* user_code_start = user_code_page + 0x1000 - size;
 
-    __asm__("clflush [%0]"::"r"(user_code_start));
+    uint8_t* user_code_start = user_code_page + 0x1000 - size;
+    memcpy(user_code_start, instruction, size);
     enter_user(user_code_start, NULL);
 }
 
