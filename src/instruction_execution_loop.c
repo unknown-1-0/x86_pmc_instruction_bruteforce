@@ -148,6 +148,7 @@ void execute_instruction(const uint8_t* instruction, size_t size)
 
     uint8_t* user_code_start = user_code_page + 0x1000 - size;
     memcpy(user_code_start, instruction, size);
+    __asm__ volatile("clflush %0"::"m"(*user_code_start));
     enter_user(user_code_start, NULL);
 }
 
