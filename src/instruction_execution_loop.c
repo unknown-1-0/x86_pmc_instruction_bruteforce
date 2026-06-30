@@ -32,8 +32,10 @@ static inline void __attribute__((noreturn)) halt(void)
 enum perf_counters_ids
 {
     UOPS_ISSUED_ANY = 0,
+#ifdef COUNT_RETIRED
     UOPS_RETIRED_ALL,
     UOPS_RETIRED_SLOTS,
+#endif
 #ifdef COUNT_NOPS
     INST_RETIRED_NOP,
 #endif
@@ -46,14 +48,18 @@ enum perf_counters_ids
 static const uint16_t perf_counters_event_masks[PERF_EVENTS_COUNT] = {
 #if TARGET_UARCH == SKYLAKE
     [UOPS_ISSUED_ANY] = 0x010e,
+#ifdef COUNT_RETIRED
     // From Haswell and Broadwell docs, seems to work fine on Skylake
     [UOPS_RETIRED_ALL] = 0x01c2,
     [UOPS_RETIRED_SLOTS] = 0x02c2,
+#endif
 #elif TARGET_UARCH == ALDER_LAKE
     [UOPS_ISSUED_ANY] = 0x01ae,
+#ifdef COUNT_RETIRED
     // Actually UOPS_RETIRED.HEAVY
     [UOPS_RETIRED_ALL] = 0x01c2,
     [UOPS_RETIRED_SLOTS] = 0x02c2,
+#endif
 #else
 #error Unknown target CPU microarchitecture
 #endif
@@ -66,12 +72,14 @@ static const uint16_t perf_counters_event_masks[PERF_EVENTS_COUNT] = {
 
 static const CHAR16* perf_events_names[PERF_EVENTS_COUNT] = {
     [UOPS_ISSUED_ANY] = L"UOPS_ISSUED.ANY",
+#ifdef COUNT_RETIRED
 #if TARGET_UARCH == SKYLAKE
     [UOPS_RETIRED_ALL] = L"UOPS_RETIRED.ALL",
     [UOPS_RETIRED_SLOTS] = L"UOPS_RETIRED.RETIRE_SLOTS",
 #elif TARGET_UARCH == ALDER_LAKE
     [UOPS_RETIRED_ALL] = L"UOPS_RETIRED.HEAVY",
     [UOPS_RETIRED_SLOTS] = L"UOPS_RETIRED.SLOTS",
+#endif
 #endif
 #ifdef COUNT_NOPS
     [INST_RETIRED_NOP] = L"INST_RETIRED.NOP",
@@ -129,8 +137,10 @@ void execute_instruction(const uint8_t* instruction, size_t size)
 
     wrmsr(MSR_IA32_PERF_GLOBAL_CTRL,
             (1ULL<<UOPS_ISSUED_ANY)
+#ifdef COUNT_RETIRED
             | (1ULL<<UOPS_RETIRED_ALL)
             | (1ULL<<UOPS_RETIRED_SLOTS)
+#endif
 #ifdef COUNT_NOPS
             | (1ULL<<INST_RETIRED_NOP)
 #endif
