@@ -499,6 +499,29 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
 
         if (vex_seen)
         {
+            if (byte == 0xc4 && i+2 < length)
+            {
+                uint8_t b1 = bytes[i+1];
+                if ((b1 & 0b11100000) != 0b11100000)
+                {
+                    return true;
+                }
+
+                uint8_t b2 = bytes[i+2];
+                if ((b2 & 0b01111000) != 0b01111000)
+                {
+                    return true;
+                }
+            }
+            else if (byte == 0xc5 && i+1 < length)
+            {
+                uint8_t b1 = bytes[i+1];
+                if ((b1 & 0b11111000) != 0b11111000)
+                {
+                    return true;
+                }
+            }
+
             malformed_instruction_expect_ud = vex_malformed_instruction_expect_ud;
             return vex_invalid;
         }
