@@ -13,6 +13,7 @@
 
 static inline void __attribute__((noreturn)) halt(void)
 {
+    print(L"Halting CPU\r\n");
     while(1)
     {
         __asm__("cli");
@@ -590,7 +591,6 @@ void check_ud2_measurements(struct context* context, uint64_t cur_perf_counters_
         printf(L"Could not save UD2 performance counters values, status = 0x%lx\r\n", status);
         print(L"Closing save file\r\n");
         close_save_file();
-        print(L"Halting CPU\r\n");
         halt();
     }
 }
@@ -664,7 +664,6 @@ void check_nop_measurements(struct context* context, uint64_t cur_perf_counters_
         printf(L"Could not save NOP performance counters values, status = 0x%lx\r\n", status);
         print(L"Closing save file\r\n");
         close_save_file();
-        print(L"Halting CPU\r\n");
         halt();
     }
 }
@@ -885,7 +884,6 @@ void check_last_instruction(struct context* context, uint64_t cur_perf_counters_
 
             print(L"Closing save file\r\n");
             close_save_file();
-            print(L"Halting CPU\r\n");
             halt();
         }
         flush_required = true;
