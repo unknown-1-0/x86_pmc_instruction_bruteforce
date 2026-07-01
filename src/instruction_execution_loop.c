@@ -464,7 +464,30 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
 
         if (evex_seen)
         {
-            break;
+            if (i + 3 >= length)
+            {
+                return false;
+            }
+
+            uint8_t p0 = bytes[i+1];
+            if ((p0 & 0b11110000) != 0b11110000)
+            {
+                return true;
+            }
+
+            uint8_t p1 = bytes[i+2];
+            if (p1 & 0b01111000)
+            {
+                return true;
+            }
+
+            uint8_t p2 = bytes[i+3];
+            if ((p2 & 0b10011111) != 0b00001000)
+            {
+                return true;
+            }
+
+            return false;
         }
 
         if (vex_seen)

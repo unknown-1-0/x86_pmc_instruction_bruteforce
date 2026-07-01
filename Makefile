@@ -1,7 +1,7 @@
 CC=clang
 CPU_MODE=64
 TARGET_UARCH=SKYLAKE
-TARGET_CFLAGS=-Wl,-entry:efi_main -Wl,-subsystem:efi_application -fuse-ld=lld-link -target x86_64-unknown-windows -nostdlib -ffreestanding -fshort-wchar -mno-red-zone
+TARGET_CFLAGS=-Wl,-entry:efi_main -Wl,-subsystem:efi_application -fuse-ld=lld-link -target x86_64-unknown-windows --std=c23 -nostdlib -ffreestanding -fshort-wchar -mno-red-zone
 CFLAGS=$(TARGET_CFLAGS) -Wall -Wextra -Wno-error=strict-prototypes -Wno-error=unused-function -pedantic -Werror -masm=intel -I/usr/include/efi -I./src -I./xed/obj/wkit/include/xed -O3 -DCOUNT_NOPS -DCOUNT_RETIRED -DCPU_MODE=$(CPU_MODE) -DCOUNT_XED_VS_CPU_MISMATCHES -DTARGET_UARCH=$(TARGET_UARCH) -flto=full
 
 SRCS=src/main.c src/print.c src/load_segments.S src/exception_handlers.S src/instruction_execution_loop.c src/system_tables_setup.c src/enter_user.S src/save_file.c src/halt.c src/string.c src/stdlib.c src/disasm.c xed/obj/wkit/lib/libxed.a
