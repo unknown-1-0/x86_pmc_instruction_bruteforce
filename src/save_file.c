@@ -131,13 +131,41 @@ EFI_STATUS save_data(void* data, size_t size)
     return output_file->Write(output_file, &size, data);
 }
 
+EFI_STATUS save_uint64(uint64_t value)
+{
+    uint8_t out_value[sizeof(value)*8/7 + 1] = {0};
+
+    size_t size = 0;
+    while (value >= (1u<<7))
+    {
+        out_value[size++] = (value & ((1u<<7)-1u)) | (1u<<7);
+        value >>= 7;
+    }
+
+    out_value[size++] = value;
+
+    return save_data(out_value, size);
+}
+
+EFI_STATUS save_uint64_array(const uint64_t* values, size_t element_count)
+{
+    for (size_t i = 0; i < element_count; i++)
+    {
+        EFI_STATUS status = save_uint64(values[i]);
+        if (__builtin_expect(status != EFI_SUCCESS, 0))
+        {
+            return status;
+        }
+    }
+    return EFI_SUCCESS;
+}
 
 #define EXTRA_DATA_PRESENT_FLAG 0x80u
 EFI_STATUS save_instruction_data(struct context* context,
                                  enum instruction_type instruction_type,
                                  uint8_t* instruction_bytes, size_t length,
                                  bool extra_data_present, uint64_t extra_data,
-                                 uint32_t* perf_counters_values,
+                                 const uint64_t* perf_counters_values,
                                  size_t perf_counters_count)
 {
 #ifdef NO_SAVE
@@ -171,7 +199,7 @@ EFI_STATUS save_instruction_data(struct context* context,
 
     if (extra_data_present)
     {
-        status = save_data(&extra_data, sizeof(extra_data));
+        status = save_uint64(extra_data);
 
         if (status != EFI_SUCCESS)
         {
@@ -180,8 +208,7 @@ EFI_STATUS save_instruction_data(struct context* context,
         }
     }
 
-    status = save_data(perf_counters_values,
-                       perf_counters_count * sizeof(perf_counters_values[0]));
+    status = save_uint64_array(perf_counters_values, perf_counters_count);
 
     if (status != EFI_SUCCESS)
     {
@@ -209,7 +236,7 @@ EFI_STATUS save_instruction_data(struct context* context,
         printf(L"Could not write instruction bytes, status = 0x%lx\r\n", (uint64_t)status);
     }
 
-    return EFI_SUCCESS;
+    return status;
 }
 
 EFI_STATUS flush_save_file(void)

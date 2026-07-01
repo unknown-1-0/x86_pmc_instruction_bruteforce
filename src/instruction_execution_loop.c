@@ -216,7 +216,7 @@ void dump_stats(struct context* context,
                 size_t instruction_length,
                 bool extra_info_present,
                 uint64_t extra_info,
-                uint32_t perf_counters_values[PERF_EVENTS_COUNT],
+                uint64_t perf_counters_values[PERF_EVENTS_COUNT],
                 uint64_t xed_length)
 {
     printf(L"Unique instructions executed: 0x%lx, saved: 0x%lx\r\n",
@@ -279,7 +279,7 @@ void dump_stats(struct context* context,
 
     for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
     {
-        printf(L"%s: 0x%x\r\n", perf_events_names[i], perf_counters_values[i]);
+        printf(L"%s: 0x%lx\r\n", perf_events_names[i], perf_counters_values[i]);
     }
 
 }
@@ -484,9 +484,9 @@ void execute_ud(void)
 }
 
 static bool measuring_ud = true;
-static uint32_t ud_perf_counters_values[PERF_EVENTS_COUNT] = {0};
+static uint64_t ud_perf_counters_values[PERF_EVENTS_COUNT] = {0};
 
-void check_ud2_measurements(struct context* context, uint32_t cur_perf_counters_values[PERF_EVENTS_COUNT])
+void check_ud2_measurements(struct context* context, uint64_t cur_perf_counters_values[PERF_EVENTS_COUNT])
 {
     if (context->exception_number != EXCEPTION_INVALID_OPCODE)
     {
@@ -528,7 +528,7 @@ void check_ud2_measurements(struct context* context, uint32_t cur_perf_counters_
             perf_events_names[i], ud_perf_counters_values[i]);
     }
 
-    EFI_STATUS status = save_data(ud_perf_counters_values, sizeof(ud_perf_counters_values));
+    EFI_STATUS status = save_uint64_array(ud_perf_counters_values, PERF_EVENTS_COUNT);
 
     print(L"\r\n");
 
@@ -550,9 +550,9 @@ void execute_nop(void)
 }
 
 static bool measuring_nop = false;
-static uint32_t nop_perf_counters_values[PERF_EVENTS_COUNT] = {0};
+static uint64_t nop_perf_counters_values[PERF_EVENTS_COUNT] = {0};
 
-void check_nop_measurements(struct context* context, uint32_t cur_perf_counters_values[PERF_EVENTS_COUNT])
+void check_nop_measurements(struct context* context, uint64_t cur_perf_counters_values[PERF_EVENTS_COUNT])
 {
     if (context->exception_number != EXCEPTION_DEBUG)
     {
@@ -602,7 +602,7 @@ void check_nop_measurements(struct context* context, uint32_t cur_perf_counters_
             perf_events_names[i], nop_perf_counters_values[i]);
     }
 
-    EFI_STATUS status = save_data(nop_perf_counters_values, sizeof(nop_perf_counters_values));
+    EFI_STATUS status = save_uint64_array(nop_perf_counters_values, PERF_EVENTS_COUNT);
 
     print(L"\r\n");
 
@@ -617,9 +617,9 @@ void check_nop_measurements(struct context* context, uint32_t cur_perf_counters_
 }
 #endif
 
-static uint32_t last_perf_counters_values[PERF_EVENTS_COUNT] = {0};
+static uint64_t last_perf_counters_values[PERF_EVENTS_COUNT] = {0};
 
-static void restart_on_unstable_counters_values(uint32_t cur_perf_counters_values[PERF_EVENTS_COUNT])
+static void restart_on_unstable_counters_values(uint64_t cur_perf_counters_values[PERF_EVENTS_COUNT])
 {
     bool restart_required = false;
 
@@ -642,8 +642,8 @@ static void restart_on_unstable_counters_values(uint32_t cur_perf_counters_value
 }
 
 static bool perf_counters_values_match(
-        const uint32_t cur_values[PERF_EVENTS_COUNT],
-        const uint32_t reference_values[PERF_EVENTS_COUNT]
+        const uint64_t cur_values[PERF_EVENTS_COUNT],
+        const uint64_t reference_values[PERF_EVENTS_COUNT]
         )
 {
     for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
@@ -660,7 +660,7 @@ static bool flush_required = false;
 
 #define MSR_IA32_MCG_CAP 0x179
 #define MCG_CAP_REPORTING_BANKS_COUNT_MASK 0xfULL
-void check_last_instruction(struct context* context, uint32_t cur_perf_counters_values[PERF_EVENTS_COUNT])
+void check_last_instruction(struct context* context, uint64_t cur_perf_counters_values[PERF_EVENTS_COUNT])
 {
     bool has_error_code = ((1ULL << context->exception_number) & EXCEPTIONS_WITH_ERROR_CODE_MASK) != 0;
     struct iretq_frame* frame = has_error_code ? &context->iretq_frame_with_error_code : &context->iretq_frame_no_error_code;
@@ -904,27 +904,10 @@ static inline uint64_t __attribute__((always_inline)) rdpmc(uint32_t index)
 
 void handle_exception(struct context* context)
 {
-    uint32_t cur_perf_counters_values[PERF_EVENTS_COUNT] = {0};
+    uint64_t cur_perf_counters_values[PERF_EVENTS_COUNT] = {0};
     for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
     {
-        uint64_t value = rdpmc(i);
-        if (__builtin_expect(value & ~0xffFFffFFULL, 0))
-        {
-            print(L"BUG: Performance counter value exceeds 32 bits!\r\n");
-            printf(L"%s: 0x%lx\r\n", perf_events_names[i], value);
-
-            print(L"Current instruction bytes:\r\n");
-            for (size_t j = 0; j < cur_instruction_length; j++)
-            {
-                printf(L"%hx ", instruction_bytes[j]);
-            }
-            print(L"\r\nClosing save file\r\n");
-            close_save_file();
-            print(L"Halting CPU.\r\n");
-            halt();
-        }
-
-        cur_perf_counters_values[i] = (uint32_t)value;
+        cur_perf_counters_values[i] = rdpmc(i);
     }
 
     if (__builtin_expect(measuring_ud, 0))
