@@ -429,6 +429,13 @@ static bool contains_invalid_count_of_prefixes(const uint8_t* bytes, size_t leng
             break;
         case 0xc4:
         case 0xc5:
+#if CPU_MODE != 64
+            if (i+1 >= length || bytes[i+1] < 0xc0)
+            {
+                // LDS/LES instruction
+                return false;
+            }
+#endif
             // VEX prefix contains various fields in the next 1-2 bytes,
             // and, if it's present, the opcode bytes are located immediately after it
 
