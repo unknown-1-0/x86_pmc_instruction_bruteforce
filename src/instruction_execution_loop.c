@@ -127,6 +127,23 @@ void dump_bruteforce_config(void)
 static uint64_t perf_global_ctrl_enable_all = 0;
 void init_perf_counters(void)
 {
+    uint32_t eax = 0xa;
+    __asm__("cpuid":"+a"(eax)::"rbx","rcx","rdx");
+
+    uint8_t counters_available = (eax >> 8) & 0xff;
+
+    printf(L"General-purpose performance counters available: 0x%x\r\n", counters_available);
+
+    if (PERF_EVENTS_COUNT > counters_available)
+    {
+        printf(L"Not enough performance counters! Events to count: 0x%x > 0x%x!\r\n",
+                PERF_EVENTS_COUNT, counters_available);
+        print(L"Try to disable hyper-threading in the firmware settings.\r\n"
+              L"If that does not help, reduce the number of events to count.\r\n");
+        halt();
+    }
+
+
     wrmsr(MSR_IA32_FIXED_CTR_CTRL, 0);
     wrmsr(MSR_IA32_PERF_GLOBAL_CTRL, 0);
     for (uint16_t i = 0; i < PERF_EVENTS_COUNT; i++)
