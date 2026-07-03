@@ -40,6 +40,9 @@ enum perf_counters_ids
 #ifdef COUNT_NOPS
     INST_RETIRED_NOP,
 #endif
+    IDQ_MITE_UOPS,
+    IDQ_DSB_UOPS,
+    IDQ_MS_UOPS,
     PERF_EVENTS_COUNT
 };
 
@@ -53,6 +56,9 @@ static const uint16_t perf_counters_event_masks[PERF_EVENTS_COUNT] = {
     // From Haswell and Broadwell docs, seems to work fine on Skylake
     [UOPS_RETIRED_ALL] = 0x01c2,
     [UOPS_RETIRED_SLOTS] = 0x02c2,
+    [IDQ_MITE_UOPS] = 0x0479,
+    [IDQ_DSB_UOPS] = 0x0879,
+    [IDQ_MS_UOPS] = 0x3079,
 #endif
 #elif TARGET_UARCH == ALDER_LAKE
     [UOPS_ISSUED_ANY] = 0x01ae,
@@ -61,6 +67,9 @@ static const uint16_t perf_counters_event_masks[PERF_EVENTS_COUNT] = {
     [UOPS_RETIRED_ALL] = 0x01c2,
     [UOPS_RETIRED_SLOTS] = 0x02c2,
 #endif
+    [IDQ_MITE_UOPS] = 0x0479,
+    [IDQ_DSB_UOPS] = 0x0879,
+    [IDQ_MS_UOPS] = 0x2079,
 #else
 #error Unknown target CPU microarchitecture
 #endif
@@ -85,7 +94,9 @@ static const CHAR16* perf_events_names[PERF_EVENTS_COUNT] = {
 #ifdef COUNT_NOPS
     [INST_RETIRED_NOP] = L"INST_RETIRED.NOP",
 #endif
-
+    [IDQ_MITE_UOPS] = L"IDQ.MITE_UOPS",
+    [IDQ_DSB_UOPS] = L"IDQ.DSB_UOPS",
+    [IDQ_MS_UOPS] = L"IDQ.MS_UOPS",
 };
 
 #undef SKYLAKE
@@ -112,12 +123,15 @@ void dump_bruteforce_config(void)
 
 #define MSR_IA32_FIXED_CTR_CTRL 0x38d
 #define MSR_IA32_PERF_GLOBAL_CTRL 0x38f
+
+static uint64_t perf_global_ctrl_enable_all = 0;
 void init_perf_counters(void)
 {
     wrmsr(MSR_IA32_FIXED_CTR_CTRL, 0);
     wrmsr(MSR_IA32_PERF_GLOBAL_CTRL, 0);
     for (uint16_t i = 0; i < PERF_EVENTS_COUNT; i++)
     {
+        perf_global_ctrl_enable_all |= 1ULL << i;
         wrmsr(MSR_IA32_PERFEVTSEL(i),
                 PERFEVTSEL_ENABLE | PERFEVTSEL_USER | perf_counters_event_masks[i]);
     }
@@ -127,8 +141,6 @@ uint8_t* user_code_page = NULL;
 void __attribute__((noreturn)) enter_user(void* rip, void* rsp);
 void execute_instruction(const uint8_t* instruction, size_t size)
 {
-
-
     wrmsr(MSR_IA32_PERF_GLOBAL_CTRL, 0);
 
     for (uint16_t i = 0; i < PERF_EVENTS_COUNT; i++)
@@ -136,16 +148,7 @@ void execute_instruction(const uint8_t* instruction, size_t size)
         wrmsr(MSR_IA32_PMC(i), 0);
     }
 
-    wrmsr(MSR_IA32_PERF_GLOBAL_CTRL,
-            (1ULL<<UOPS_ISSUED_ANY)
-#ifdef COUNT_RETIRED
-            | (1ULL<<UOPS_RETIRED_ALL)
-            | (1ULL<<UOPS_RETIRED_SLOTS)
-#endif
-#ifdef COUNT_NOPS
-            | (1ULL<<INST_RETIRED_NOP)
-#endif
-         );
+    wrmsr(MSR_IA32_PERF_GLOBAL_CTRL, perf_global_ctrl_enable_all);
 
     uint8_t* user_code_start = user_code_page + 0x1000 - size;
     memcpy(user_code_start, instruction, size);
