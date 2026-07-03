@@ -22,7 +22,8 @@
 #define MSR_IA32_EFER 0xc0000080
 #define EFER_NXE (1ULL<<11)
 void load_segments(uint16_t code_segment, uint16_t stack_segment, uint16_t task_segment);
-extern uint8_t* user_code_page;
+extern uint8_t* user_code_page_rw;
+extern uint8_t* user_code_page_for_exec;
 uint8_t* xsave_state_area_allocated_ptr = NULL;
 uint8_t* xsave_state_area_ptr = NULL;
 
@@ -70,15 +71,15 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 
     set_tss_rsp0(kernel_stack_pages+0x1000*KERNEL_STACK_PAGES);
 
-    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, (EFI_PHYSICAL_ADDRESS*)&user_code_page);
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 2, (EFI_PHYSICAL_ADDRESS*)&user_code_page_rw);
     if (status != EFI_SUCCESS)
     {
-        printf(L"Could not allocate a page for user code, status = 0x%lx\r\n", (uint64_t)status);
+        printf(L"Could not allocate pages for user code, status = 0x%lx\r\n", (uint64_t)status);
         SystemTable->BootServices->FreePages(kernel_stack_pages, 2);
         return status;
     }
 
-    SystemTable->BootServices->SetMem(user_code_page, 0x1000, 0);
+    SystemTable->BootServices->SetMem(user_code_page_rw, 2*0x1000, 0);
 
     uint64_t cr4 = read_cr4() | CR4_OSXSAVE | CR4_OSXMMEXCPT | CR4_OSFXSR;
 
@@ -118,7 +119,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
     if (status != EFI_SUCCESS)
     {
         printf(L"Could not allocate memory for XSAVE state area, status = 0x%lx\r\n", (uint64_t)status);
-        return status;
+        halt();
     }
 
     // Resets XSTATE_BV field by the way
@@ -132,18 +133,25 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
     if (status != EFI_SUCCESS)
     {
         printf(L"Could not open an output file, status = 0x%lx\r\n", (uint64_t)status);
-        return status;
+        halt();;
     }
 
     __asm__("cli");
     write_cr8(0xf);
 
-    printf(L"User code page @ 0x%lx, remapping as user-accessible\r\n", user_code_page);
-    status = remap_page((size_t)user_code_page, (size_t)user_code_page, PROT_READ | PROT_EXEC | PROT_USER);
-
+    printf(L"User code page @ 0x%lx, remapping as user-accessible\r\n", user_code_page_rw);
+    status = remap_page((size_t)user_code_page_rw, (size_t)user_code_page_rw, PROT_READ | PROT_WRITE);
     if (status != EFI_SUCCESS)
     {
-        printf(L"Could not remap the user code page, status = 0x%lx\r\n", status);
+        printf(L"Could not remap the read-write version of the user code page, status = 0x%lx\r\n", status);
+        halt();
+    }
+
+    user_code_page_for_exec = user_code_page_rw + 0x1000;
+    status = remap_page((size_t)user_code_page_for_exec, (size_t)user_code_page_rw, PROT_READ | PROT_EXEC | PROT_USER);
+    if (status != EFI_SUCCESS)
+    {
+        printf(L"Could not remap the exec-only version of the user code page, status = 0x%lx\r\n", status);
         halt();
     }
     setup_gdt();

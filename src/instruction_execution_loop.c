@@ -137,7 +137,8 @@ void init_perf_counters(void)
     }
 }
 
-uint8_t* user_code_page = NULL;
+uint8_t* user_code_page_rw = NULL;
+uint8_t* user_code_page_for_exec = NULL;
 void __attribute__((noreturn)) enter_user(void* rip, void* rsp);
 void execute_instruction(const uint8_t* instruction, size_t size)
 {
@@ -150,10 +151,12 @@ void execute_instruction(const uint8_t* instruction, size_t size)
 
     wrmsr(MSR_IA32_PERF_GLOBAL_CTRL, perf_global_ctrl_enable_all);
 
-    uint8_t* user_code_start = user_code_page + 0x1000 - size;
+    size_t instruction_start_offset = 0x1000 - size;
+
+    uint8_t* user_code_start = user_code_page_rw + instruction_start_offset;
     memcpy(user_code_start, instruction, size);
     __asm__ volatile("clflush %0"::"m"(*user_code_start));
-    enter_user(user_code_start, NULL);
+    enter_user(user_code_page_for_exec + instruction_start_offset, NULL);
 }
 
 uint8_t instruction_bytes[15] = {0x00};
@@ -728,7 +731,7 @@ void check_last_instruction(struct context* context, uint64_t cur_perf_counters_
         {
             uint64_t cr2 = read_cr2();
 
-            if (__builtin_expect(cr2 == (size_t)user_code_page + 0x1000 && frame->rip != cr2, 1))
+            if (__builtin_expect(cr2 == (size_t)user_code_page_for_exec + 0x1000 && frame->rip != cr2, 1))
             {
                 increment_instruction_length_and_retry_exec();
             }
