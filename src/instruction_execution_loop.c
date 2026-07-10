@@ -586,6 +586,7 @@ void check_ud2_measurements(struct context* context, uint64_t cur_perf_counters_
 
         printf(L"CS:RIP = %lx:%lx RFLAGS=%lx\r\n", frame->cs, frame->rip, frame->rflags);
         printf(L"SS:RSP = %lx:%lx\r\n", frame->ss, frame->rsp);
+        close_save_file();
         halt();
     }
 
@@ -651,6 +652,7 @@ void check_nop_measurements(struct context* context, uint64_t cur_perf_counters_
 
         printf(L"CS:RIP = %lx:%lx RFLAGS=%lx\r\n", frame->cs, frame->rip, frame->rflags);
         printf(L"SS:RSP = %lx:%lx\r\n", frame->ss, frame->rsp);
+        close_save_file();
         halt();
     }
 
@@ -658,6 +660,7 @@ void check_nop_measurements(struct context* context, uint64_t cur_perf_counters_
     {
         printf(L"Unexpected count of NOPs retired: expected: 1, got: 0x%lx\r\n",
             cur_perf_counters_values[INST_RETIRED_NOP]);
+        close_save_file();
         halt();
     }
 
