@@ -67,6 +67,25 @@ size_t strlen(const char* s)
     return len;
 }
 
+char* strncat(char* dst, const char* src, size_t size)
+{
+    char* cur_dst = dst;
+
+    while(*cur_dst)
+    {
+        cur_dst++;
+    }
+
+    for (size_t i = 0; i < size && *src; i++)
+    {
+        *cur_dst++ = *src++;
+    }
+
+    *cur_dst = 0;
+
+    return dst;
+}
+
 int strcat_s(char* dst, size_t dest_size, const char* src)
 {
     if (!dst)
