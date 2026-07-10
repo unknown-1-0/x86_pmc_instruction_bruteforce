@@ -40,9 +40,11 @@ enum perf_counters_ids
 #ifdef COUNT_NOPS
     INST_RETIRED_NOP,
 #endif
+#ifdef COUNT_IDQ
     IDQ_MITE_UOPS,
     IDQ_DSB_UOPS,
     IDQ_MS_UOPS,
+#endif
     PERF_EVENTS_COUNT
 };
 
@@ -56,6 +58,8 @@ static const uint16_t perf_counters_event_masks[PERF_EVENTS_COUNT] = {
     // From Haswell and Broadwell docs, seems to work fine on Skylake
     [UOPS_RETIRED_ALL] = 0x01c2,
     [UOPS_RETIRED_SLOTS] = 0x02c2,
+#endif
+#ifdef COUNT_IDQ
     [IDQ_MITE_UOPS] = 0x0479,
     [IDQ_DSB_UOPS] = 0x0879,
     [IDQ_MS_UOPS] = 0x3079,
@@ -67,13 +71,14 @@ static const uint16_t perf_counters_event_masks[PERF_EVENTS_COUNT] = {
     [UOPS_RETIRED_ALL] = 0x01c2,
     [UOPS_RETIRED_SLOTS] = 0x02c2,
 #endif
+#ifdef COUNT_IDQ
     [IDQ_MITE_UOPS] = 0x0479,
     [IDQ_DSB_UOPS] = 0x0879,
     [IDQ_MS_UOPS] = 0x2079,
+#endif
 #else
 #error Unknown target CPU microarchitecture
 #endif
-
 
 #ifdef COUNT_NOPS
     [INST_RETIRED_NOP] = 0x02c0,
@@ -94,9 +99,11 @@ static const CHAR16* perf_events_names[PERF_EVENTS_COUNT] = {
 #ifdef COUNT_NOPS
     [INST_RETIRED_NOP] = L"INST_RETIRED.NOP",
 #endif
+#ifdef COUNT_IDQ
     [IDQ_MITE_UOPS] = L"IDQ.MITE_UOPS",
     [IDQ_DSB_UOPS] = L"IDQ.DSB_UOPS",
     [IDQ_MS_UOPS] = L"IDQ.MS_UOPS",
+#endif
 };
 
 #undef SKYLAKE
