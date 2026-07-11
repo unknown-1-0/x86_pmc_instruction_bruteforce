@@ -188,7 +188,7 @@ EFI_STATUS save_instruction_data(struct context* context,
 
     if (exception_number & EXCEPTIONS_WITH_ERROR_CODE_MASK)
     {
-        status = save_data(&context->error_code, sizeof(context->error_code));
+        status = save_uint64(context->error_code);
 
         if (status != EFI_SUCCESS)
         {
