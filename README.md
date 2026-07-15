@@ -15,7 +15,7 @@ It assumes that hidden instructions perform internal checks in their microcode b
 To obtain consistent counter values, this UEFI utility:
 1. Enables the counters strictly in user space.
 2. Flushes the user code page immediately after writing the instruction bytes to execute.
-3. Executes the instruction at least two times until the performance counter values from the last run match the results from the previous one (only performed if the instruction is a candidate to be saved into a file).
+3. Executes the instruction at least two times until the performance counter values from the last run match the results from the previous one (only performed if the instruction is a candidate to be saved into a file, and this decision is based solely on the performance counters' values).
 
 ### Filtering Criteria
 An instruction is saved if it meets one of the following criteria:
@@ -24,7 +24,10 @@ An instruction is saved if it meets one of the following criteria:
 3. **It raises a machine-check (`#MC`) exception:** Architectural anomaly for user-space execution.
 
 ### Search Algorithm
-To cover the entire instruction space efficiently, a modified version of Christopher Domas' tunneling algorithm is used. Specifically, it allows filtering the instructions by the count and the contents of their prefixes. This significantly speeds up the brute-force process, as prefixes like EVEX can drastically increase overall execution time.
+To cover the entire instruction space efficiently, a modified version of Christopher Domas' tunneling algorithm is used.
+
+Specifically, it allows filtering the instructions by the count and the contents of their prefixes. This significantly speeds up the brute-force process, as prefixes like EVEX can drastically increase overall execution time.
+Also, when one of the prefix bytes is incremented, the increment pointer is forced to point to the last byte of the instruction. This ensures that the new instruction prefix combination is not skipped by accident when the instruction length stays the same after incrementing one of the prefix bytes.
 
 ## Supported Platforms
 
