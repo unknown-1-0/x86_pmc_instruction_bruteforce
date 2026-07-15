@@ -887,9 +887,11 @@ void check_last_instruction(struct context* context, uint64_t cur_perf_counters_
         case VEX_MALFORMED_BUT_ACCEPTED:
             vex_malformed_but_accepted++;
             break;
+#ifdef COUNT_NOPS
         case NOP_WITH_SIDE_EFFECTS:
             nops_with_side_effects++;
             break;
+#endif
         case XED_LENGTH_MISMATCH:
             cpu_xed_length_mismatches++;
             break;
