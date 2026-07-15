@@ -84,4 +84,4 @@ qemu-system-x86_64 -cpu host -enable-kvm -drive file=./app.img,format=raw -bios 
 * Add proper handling for CPUs that lack `XSAVE` support
 * Provide source code for a results decoder application
 * Add the ability to repeatedly execute specific instructions under different configurations (`CR4`, MSR values)
-* Verify the existence of CET-related instructions that are described in an Intel patent named "Mode-specific endbranch for control flow termination" (US11650818B2)
+* Verify the existence of CET-related instructions that are described in an Intel patent named "Control transfer termination instructions of an instruction set architecture (ISA)" (US11023232B2)
