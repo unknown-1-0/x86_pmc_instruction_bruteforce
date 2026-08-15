@@ -3,7 +3,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
-void disasm_init(void);
+#include <xed-chip-enum.h>
+void disasm_init(xed_chip_enum_t xed_chip);
 uint64_t disasm_get_instruction_length(const uint8_t* bytes, size_t size);
 
 #endif

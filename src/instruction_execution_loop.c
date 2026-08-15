@@ -1,9 +1,11 @@
 #include "control_registers.h"
 #include "disasm.h"
 #include "exception_context.h"
+#include "instruction_execution_loop.h"
 #include "msr.h"
 #include "print.h"
 #include "save_file.h"
+#include "uarch_config.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -30,24 +32,8 @@ static inline void __attribute__((noreturn)) halt(void)
 #define PERFEVTSEL_OS (1ULL<<17)
 #define PERFEVTSEL_USER (1ULL<<16)
 
-enum perf_counters_ids
-{
-    UOPS_ISSUED_ANY = 0,
-#ifdef COUNT_RETIRED
-    UOPS_RETIRED_ALL,
-    UOPS_RETIRED_SLOTS,
-#endif
-#ifdef COUNT_NOPS
-    INST_RETIRED_NOP,
-#endif
-#ifdef COUNT_IDQ
-    IDQ_MITE_UOPS,
-    IDQ_DSB_UOPS,
-    IDQ_MS_UOPS,
-#endif
-    PERF_EVENTS_COUNT
-};
 
+/*
 #define SKYLAKE 1
 #define ALDER_LAKE 2
 
@@ -108,13 +94,23 @@ static const CHAR16* perf_events_names[PERF_EVENTS_COUNT] = {
 
 #undef SKYLAKE
 #undef ALDER_LAKE
+*/
+
+static const struct perf_counter_info* perf_counters = NULL;
 
 void dump_bruteforce_config(void)
 {
-    for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+    if (perf_counters)
     {
-        printf(L"%s PMC UMask:EventCode = 0x%lx\r\n",
-            perf_events_names[i], perf_counters_event_masks[i]);
+        for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
+        {
+            printf(L"%s PMC UMask:EventCode = 0x%lx\r\n",
+            perf_counters[i].name, perf_counters[i].event_selector);
+        }
+    }
+    else
+    {
+        print(L"Performance counters selectors are not set yet!\r\n");
     }
 
 #if CPU_MODE == 64
@@ -132,8 +128,16 @@ void dump_bruteforce_config(void)
 #define MSR_IA32_PERF_GLOBAL_CTRL 0x38f
 
 static uint64_t perf_global_ctrl_enable_all = 0;
-void init_perf_counters(void)
+EFI_STATUS init_perf_counters(const struct perf_counter_info* this_cpu_perf_counters)
 {
+    perf_counters = this_cpu_perf_counters;
+
+    if (perf_counters == NULL)
+    {
+        print(L"Could not get performance counters event selectors for this CPU\r\n");
+        halt();
+    }
+
     uint32_t eax = 0xa;
     __asm__("cpuid":"+a"(eax)::"rbx","rcx","rdx");
 
@@ -147,9 +151,8 @@ void init_perf_counters(void)
                 PERF_EVENTS_COUNT, counters_available);
         print(L"Try to disable hyper-threading in the firmware settings.\r\n"
               L"If that does not help, reduce the number of events to count.\r\n");
-        halt();
+        return EFI_UNSUPPORTED;
     }
-
 
     wrmsr(MSR_IA32_FIXED_CTR_CTRL, 0);
     wrmsr(MSR_IA32_PERF_GLOBAL_CTRL, 0);
@@ -157,8 +160,10 @@ void init_perf_counters(void)
     {
         perf_global_ctrl_enable_all |= 1ULL << i;
         wrmsr(MSR_IA32_PERFEVTSEL(i),
-                PERFEVTSEL_ENABLE | PERFEVTSEL_USER | perf_counters_event_masks[i]);
+                PERFEVTSEL_ENABLE | PERFEVTSEL_USER | perf_counters[i].event_selector);
     }
+
+    return EFI_SUCCESS;
 }
 
 uint8_t* user_code_page_rw = NULL;
@@ -310,7 +315,7 @@ void dump_stats(struct context* context,
 
     for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
     {
-        printf(L"%s: 0x%lx\r\n", perf_events_names[i], perf_counters_values[i]);
+        printf(L"%s: 0x%lx\r\n", perf_counters[i].name, perf_counters_values[i]);
     }
 
 }
@@ -610,7 +615,7 @@ void check_ud2_measurements(struct context* context, uint64_t cur_perf_counters_
     for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
     {
         printf(L"%s: 0x%lx\r\n",
-            perf_events_names[i], ud_perf_counters_values[i]);
+            perf_counters[i].name, ud_perf_counters_values[i]);
     }
 
     EFI_STATUS status = save_uint64_array(ud_perf_counters_values, PERF_EVENTS_COUNT);
@@ -685,7 +690,7 @@ void check_nop_measurements(struct context* context, uint64_t cur_perf_counters_
     for (size_t i = 0; i < PERF_EVENTS_COUNT; i++)
     {
         printf(L"%s: 0x%lx\r\n",
-            perf_events_names[i], nop_perf_counters_values[i]);
+            perf_counters[i].name, nop_perf_counters_values[i]);
     }
 
     EFI_STATUS status = save_uint64_array(nop_perf_counters_values, PERF_EVENTS_COUNT);

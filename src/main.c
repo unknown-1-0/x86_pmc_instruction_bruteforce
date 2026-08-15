@@ -1,14 +1,16 @@
-#include <control_registers.h>
+#include "control_registers.h"
 #include <efi.h>
-#include <disasm.h>
-#include <halt.h>
-#include <msr.h>
-#include <print.h>
-#include <remap.h>
+#include "disasm.h"
+#include "halt.h"
+#include "instruction_execution_loop.h"
+#include "msr.h"
+#include "print.h"
+#include "remap.h"
 #include <stdbool.h>
 #include <stdint.h>
-#include <string_init.h>
-#include <system_tables_setup.h>
+#include "string_init.h"
+#include "system_tables_setup.h"
+#include "uarch_config.h"
 
 #define MSR_IA32_PMC0 0xc1
 
@@ -27,7 +29,6 @@ extern uint8_t* user_code_page_for_exec;
 uint8_t* xsave_state_area_allocated_ptr = NULL;
 uint8_t* xsave_state_area_ptr = NULL;
 
-void init_perf_counters(void);
 void execute_ud(void);
 void dump_bruteforce_config(void);
 EFI_STATUS open_save_file(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable);
@@ -58,10 +59,25 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
     print_init(SystemTable);
     string_init(SystemTable);
     remap_init(SystemTable);
-    disasm_init();
+
+    const struct uarch_config* uarch_config = get_uarch_config_for_cpu();
+    if (uarch_config == NULL)
+    {
+        print(L"Could not get microarchitecture config for this CPU (Unsupported microarchitecture?)\r\n");
+        return EFI_UNSUPPORTED;
+    }
+
+    disasm_init(uarch_config->xed_chip);
+    EFI_STATUS status = init_perf_counters(uarch_config->perf_counters);
+    if (status != EFI_SUCCESS)
+    {
+        return status;
+    }
+
+    dump_bruteforce_config();
 
     EFI_PHYSICAL_ADDRESS kernel_stack_pages = 0;
-    EFI_STATUS status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, KERNEL_STACK_PAGES, &kernel_stack_pages);
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, KERNEL_STACK_PAGES, &kernel_stack_pages);
 
     if (status != EFI_SUCCESS)
     {
@@ -133,7 +149,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
     if (status != EFI_SUCCESS)
     {
         printf(L"Could not open an output file, status = 0x%lx\r\n", (uint64_t)status);
-        halt();;
+        halt();
     }
 
     __asm__("cli");
@@ -160,8 +176,6 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 
     wrmsr(MSR_IA32_EFER, rdmsr(MSR_IA32_EFER) | EFER_NXE);
 
-    init_perf_counters();
-    dump_bruteforce_config();
     execute_ud();
     __builtin_unreachable();
 }

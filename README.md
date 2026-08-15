@@ -56,9 +56,9 @@ git submodule update --init --recursive
 ./build_xed.sh
 ```
 
-3. Compile the target binary (specify your CPU mode and microarchitecture):
+3. Compile the target binary (specify the CPU mode):
 ```bash
-make CPU_MODE=<16/32/64> TARGET_UARCH=<SKYLAKE/ALDER_LAKE> BOOTX64.EFI
+make CPU_MODE=<16/32/64> BOOTX64.EFI
 ```
 
 ## Running the Application

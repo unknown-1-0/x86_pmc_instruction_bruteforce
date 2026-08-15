@@ -5,9 +5,12 @@
 #include <xed-init.h>
 #include <xed-interface.h>
 
-void disasm_init(void)
+static xed_chip_enum_t disasm_xed_chip = XED_CHIP_INVALID;
+
+void disasm_init(xed_chip_enum_t xed_chip)
 {
     xed_tables_init();
+    disasm_xed_chip = xed_chip;
 }
 
 uint64_t disasm_get_instruction_length(const uint8_t* bytes, size_t size)
@@ -26,14 +29,7 @@ uint64_t disasm_get_instruction_length(const uint8_t* bytes, size_t size)
 #endif
     );
 
-#ifndef TARGET_UARCH
-#error Target CPU microarchitecture was not specified
-#endif
-
-#define CONCAT_HELPER(a, b) a##b
-#define CONCAT(a, b) CONCAT_HELPER(a, b)
-
-    xed_decoded_inst_set_input_chip(&xedd, CONCAT(XED_CHIP_, TARGET_UARCH));
+    xed_decoded_inst_set_input_chip(&xedd, disasm_xed_chip);
 
     if (xed_decode(&xedd, bytes, size) != XED_ERROR_NONE)
     {
