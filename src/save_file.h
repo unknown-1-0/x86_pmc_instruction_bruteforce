@@ -16,7 +16,7 @@ enum instruction_type
     UNDOCUMENTED_NOT_UD,
     VEX_MALFORMED_BUT_ACCEPTED,
 #ifdef COUNT_NOPS
-    NOP_WITH_SIDE_EFFECTS,
+    NOP,
 #endif
     XED_LENGTH_MISMATCH
 };

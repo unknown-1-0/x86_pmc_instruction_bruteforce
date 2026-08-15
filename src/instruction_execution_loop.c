@@ -226,7 +226,7 @@ static size_t undocumented_behind_ud = 0;
 static size_t undocumented_not_ud = 0;
 static size_t vex_malformed_but_accepted = 0;
 #ifdef COUNT_NOPS
-static size_t nops_with_side_effects = 0;
+static size_t nops = 0;
 #endif
 static size_t machine_checks = 0;
 #ifdef COUNT_XED_VS_CPU_MISMATCHES
@@ -261,7 +261,7 @@ void dump_stats(struct context* context,
             undocumented_behind_ud, undocumented_not_ud);
 
 #ifdef COUNT_NOPS
-    printf(L"VEX malformed but accepted: 0x%lx, NOPs with side effects: 0x%lx\r\n", vex_malformed_but_accepted, nops_with_side_effects);
+    printf(L"VEX malformed but accepted: 0x%lx, NOPs: 0x%lx\r\n", vex_malformed_but_accepted, nops);
 #else
     printf(L"VEX malformed but accepted: 0x%lx\r\n", vex_malformed_but_accepted);
 #endif
@@ -814,21 +814,7 @@ void check_last_instruction(struct context* context, uint64_t cur_perf_counters_
 #ifdef COUNT_NOPS
         else if (cur_perf_counters_values[INST_RETIRED_NOP])
         {
-            if (context->exception_number != EXCEPTION_DEBUG)
-            {
-                instruction_type = NOP_WITH_SIDE_EFFECTS;
-            }
-            else
-            {
-                restart_on_unstable_counters_values(cur_perf_counters_values);
-
-                if (!perf_counters_values_match(
-                            cur_perf_counters_values,
-                            nop_perf_counters_values))
-                {
-                    instruction_type = NOP_WITH_SIDE_EFFECTS;
-                }
-            }
+            instruction_type = NOP;
         }
 #endif
         break;
@@ -888,8 +874,8 @@ void check_last_instruction(struct context* context, uint64_t cur_perf_counters_
             vex_malformed_but_accepted++;
             break;
 #ifdef COUNT_NOPS
-        case NOP_WITH_SIDE_EFFECTS:
-            nops_with_side_effects++;
+        case NOP:
+            nops++;
             break;
 #endif
         case XED_LENGTH_MISMATCH:
